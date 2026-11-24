@@ -6,9 +6,11 @@ import UsageCenterCore
 final class SettingsWindowController {
     private var window: NSWindow?
     private let store: UsageCenterStore
+    private let onOpenHistory: (ProviderID) -> Void
 
-    init(store: UsageCenterStore) {
+    init(store: UsageCenterStore, onOpenHistory: @escaping (ProviderID) -> Void) {
         self.store = store
+        self.onOpenHistory = onOpenHistory
     }
 
     func show() {
@@ -19,14 +21,13 @@ final class SettingsWindowController {
             return
         }
 
-        let rootView = SettingsWindowView(store: store)
+        let rootView = SettingsWindowView(store: store, onOpenHistory: onOpenHistory)
         let hosting = NSHostingController(rootView: rootView)
         let win = NSWindow(contentViewController: hosting)
         win.title = "UsageCenter 设置"
-        win.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-        win.titlebarAppearsTransparent = true
-        win.setContentSize(NSSize(width: 820, height: 700))
-        win.minSize = NSSize(width: 740, height: 600)
+        win.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        win.setContentSize(NSSize(width: 840, height: 680))
+        win.minSize = NSSize(width: 760, height: 600)
         win.center()
         win.isReleasedWhenClosed = false
         self.window = win
@@ -38,22 +39,68 @@ final class SettingsWindowController {
 }
 
 @MainActor
+final class HistoryWindowController {
+    private var window: NSWindow?
+    private let store: UsageCenterStore
+
+    init(store: UsageCenterStore) {
+        self.store = store
+    }
+
+    func show(for provider: ProviderID) {
+        store.historyProvider = provider
+        store.historyWindowID = store.defaultHistoryWindowID(for: provider)
+        store.reloadHistoryMetadata()
+
+        if let existing = window {
+            existing.makeKeyAndOrderFront(nil)
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let rootView = UsageHistoryWindowView(store: store)
+        let hosting = NSHostingController(rootView: rootView)
+        let win = NSWindow(contentViewController: hosting)
+        win.title = "UsageCenter 用量历史"
+        win.titleVisibility = .hidden
+        win.titlebarAppearsTransparent = true
+        win.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        win.collectionBehavior.insert(.fullScreenPrimary)
+        win.setContentSize(NSSize(width: 900, height: 800))
+        win.minSize = NSSize(width: 720, height: 600)
+        win.center()
+        win.isReleasedWhenClosed = false
+        self.window = win
+
+        win.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+}
+
+@MainActor
 final class UsageCenterAppDelegate: NSObject, NSApplicationDelegate {
     private var store: UsageCenterStore?
     private var statusBarController: StatusBarController?
     private var settingsController: SettingsWindowController?
+    private var historyController: HistoryWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
         installMainMenuForShortcuts()
 
         let store = UsageCenterStore()
-        let settings = SettingsWindowController(store: store)
-        let statusBar = StatusBarController(store: store) {
-            settings.show()
+        let history = HistoryWindowController(store: store)
+        let settings = SettingsWindowController(store: store) { provider in
+            history.show(for: provider)
         }
+        let statusBar = StatusBarController(
+            store: store,
+            onOpenSettings: { settings.show() },
+            onOpenHistory: { provider in history.show(for: provider) }
+        )
 
         self.store = store
+        self.historyController = history
         self.settingsController = settings
         self.statusBarController = statusBar
     }
@@ -110,12 +157,19 @@ struct UsageCenterMain {
 
     private static func runSelfCheckAndExit() -> Never {
         do {
-            // 1. Deterministic Parser Self-Checks
+            // 1. SVG Assets Self-Check
+            for p in ProviderID.allCases {
+                let img = BrandIconRenderer.statusIcon(for: p, size: 16, mode: .brand)
+                precondition(img.size.width == 16 && !img.representations.isEmpty, "Missing SVG for \(p)")
+            }
+            print("[OK] Official SVG brand icons loaded")
+
+            // 2. Deterministic Parser Self-Checks
             let claudeSample = Data("""
             {"is_error":false,"result":"Current session: 14% used · resets Nov 25 at 4:30am (Asia/Shanghai)\\nCurrent week (all models): 32% used · resets Nov 28 at 10pm (Asia/Shanghai)"}
             """.utf8)
             let claudeSnap = try ClaudeCLIParser.parseUsageOutput(claudeSample)
-            precondition(claudeSnap.windows.count == 2 && claudeSnap.windows[0].usedPercent == 14)
+            precondition(claudeSnap.windows.count == 2 && claudeSnap.windows[0].remainingPercent == 86)
 
             let codexSnap = try CodexCLIParser.parse(
                 accountResult: ["account": ["type": "chatgpt", "planType": "plus"]],
@@ -131,20 +185,21 @@ struct UsageCenterMain {
             {"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","buckets":[{"id":"gemini-5h","window":"5h","remaining_fraction":0.92,"reset_time":"2026-11-24T20:22:25Z"},{"id":"gemini-weekly","window":"weekly","remaining_fraction":0.98,"reset_time":"2026-12-01T15:22:25Z"}]}]}}}
             """.utf8)
             let agySnap = try AntigravityCLIParser.parseUsageOutput(agySample)
-            precondition(agySnap.windows.count == 2 && agySnap.windows[0].usedPercent == 8)
+            precondition(agySnap.windows.count == 2 && agySnap.windows[0].remainingPercent == 92)
 
-            let dsSample = Data("""
-            {"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"48.60","granted_balance":"8.60","topped_up_balance":"40.00"}]}
+            let dshSample = Data("""
+            {"code":0,"data":{"biz_code":0,"biz_data":{"normal_wallets":[{"currency":"CNY","balance":"36.4416"}],"bonus_wallets":[{"currency":"CNY","balance":"2.00"}],"total_costs":[{"currency":"CNY","amount":"37.8409"}]}}}
             """.utf8)
-            let dsSnap = try DeepSeekCLIParser.parseBalanceOutput(dsSample)
-            precondition(dsSnap.preferredBalance(currencyPreference: "AUTO")?.formattedTotal == "¥48.60")
-            print("[OK] Parser unit assertions passed")
+            let dsSnap = try DeepSeekCLIParser.parseBalanceOutput(dshSample)
+            precondition(dsSnap.preferredBalance(currencyPreference: "AUTO")?.formattedTotal == "¥38.44")
+            precondition(dsSnap.preferredBalance(currencyPreference: "AUTO")?.formattedTotalCost == "¥37.84")
+            print("[OK] All parser assertions passed (Remaining% + DSH Wallets)")
         } catch {
-            fputs("[FAIL] Parser assertion failed: \(error)\n", stderr)
+            fputs("[FAIL] Assertion error: \(error)\n", stderr)
             exit(1)
         }
 
-        // 2. Live Local CLI Integration Probe
+        // 3. Live Local CLI + DSH Integration Probe
         let semaphore = DispatchSemaphore(value: 0)
         Task {
             let prefs = UsageCenterPreferences()
@@ -152,16 +207,17 @@ struct UsageCenterMain {
                 do {
                     let snap = try await ProviderUsageFetcher.fetch(provider: provider, preferences: prefs)
                     if provider == .deepseek {
-                        let bal = snap.preferredBalance(currencyPreference: "AUTO")?.formattedTotal ?? "N/A"
-                        print("[LIVE OK] \(provider.displayName): \(bal)")
+                        let item = snap.preferredBalance(currencyPreference: "AUTO")
+                        print("[LIVE OK] DeepSeek (\(snap.accountLabel ?? "-")): remaining \(item?.formattedTotal ?? "N/A"), totalCost \(item?.formattedTotalCost ?? "N/A")")
                     } else {
                         let pair = snap.resolvedWindows(antigravityGroup: .auto)
-                        let s5 = pair.fiveHour.map { "5h used \($0.usedPercent)%" } ?? "no-5h"
-                        let s7 = pair.weekly.map { "weekly used \($0.usedPercent)%" } ?? "no-weekly"
-                        print("[LIVE OK] \(provider.displayName) (\(snap.accountLabel ?? "-")): \(s5), \(s7) [total windows: \(snap.windows.count)]")
+                        let s5 = pair.fiveHour.map { "5h remaining \($0.remainingPercent)%" } ?? "no-5h"
+                        let s7 = pair.weekly.map { "weekly remaining \($0.remainingPercent)%" } ?? "no-weekly"
+                        let tok = snap.tokenActivity.map { ", 30d tokens \(CompactTokenFormatter.format($0.last30DaysTotal))" } ?? ""
+                        print("[LIVE OK] \(provider.displayName) (\(snap.accountLabel ?? "-")): \(s5), \(s7)\(tok)")
                     }
                 } catch {
-                    print("[LIVE INFO] \(provider.displayName): \(error.localizedDescription)")
+                    print("[LIVE ERR] \(provider.displayName): \(error.localizedDescription)")
                 }
             }
             semaphore.signal()

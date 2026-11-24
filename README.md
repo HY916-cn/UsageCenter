@@ -1,39 +1,32 @@
 # UsageCenter
 
-**UsageCenter** 是一款原生 macOS 菜单栏状态组件，在**单一菜单栏组件**内同时展示 **Claude**、**ChatGPT (Codex)**、**Google Antigravity** 的 **5 小时用量、周用量及其对应重置时间**，以及 **DeepSeek API 余额**。所有数据均通过本机 CLI 获取，详情弹窗与设置窗口采用 macOS Liquid Glass 液态玻璃风格（在旧版系统自动回退为系统毛玻璃材质）。
+**UsageCenter** 是一款原生 macOS 菜单栏配额与额度监控工具，结合 **Stats** 的模块化水平状态栏排列与 **CodexMeter** 的指示器、弹窗与历史分析体验，在单一菜单栏组件中同时展示 **Claude**、**ChatGPT (Codex)**、**Google Antigravity** 的 **5 小时剩余配额、每周剩余配额及对应剩余重置时间**，以及本地已登录 **DSH (DeepSeek)** 账户的 **API 可用余额与累计消耗**。
 
 ## 核心特性
 
-- **单组件多段并列展示**：在一个 `NSStatusItem` 中同时呈现四个服务，每一段均配有对应的专属品牌矢量图标（支持彩色品牌图标与单色自适应图标切换）。
-- **独立分段点击详情**：点击菜单栏中的任意服务分段（Claude / ChatGPT / Antigravity / DeepSeek），即在该分段正下方弹出对应服务的 Liquid Glass 详情面板；右键任意位置可快速刷新全部、打开设置或退出。
-- **纯本地 CLI 驱动**：
-  - **Claude**：调用本地 `claude -p "/usage" --output-format json --no-session-persistence` 与 `claude auth status` 解析 5 小时会话限额、每周限额与精确重置时间。
-  - **ChatGPT**：调用本地 `codex app-server --listen stdio://` 通过 JSON-RPC 读取 5 小时与每周配额窗口及重置时间。
-  - **Antigravity**：调用本地 `agy -p "/usage" --output-format json` 读取 `Gemini Models` 与 `Claude and GPT models` 各模型组的 5 小时及周配额与重置时间。
-  - **DeepSeek**：通过 macOS 系统钥匙串安全读取 API Key 并调用本地 `curl`（经标准输入安全传递鉴权头）查询官方余额接口，亦支持配置自定义本地 CLI 命令。
-- **高自由度呈现设置与实时预览**：
-  - 支持独立开关各服务分段、自由调整左右排列顺序，并在设置顶部实时预览状态栏渲染效果。
-  - 提供 **双行堆叠（5h + 周 + 时间）**、**同心双环 + 数值**、**双进度条 + 数值**、**单行紧凑数值**、**极简图标与图形** 5 种呈现形式，支持全局统一或按分段单独指定。
-  - 支持切换 **已用比例 (Used%) / 剩余比例 (Remaining%)**、**重置倒计时 / 重置时间点 / 隐藏时间**。
+- **官方 SVG 品牌图标 + Stats 模块化状态栏排列**：每段左侧内置官方矢量 `.svg` 图标（支持彩色图标与单色模板图标切换），各段可独立启用/隐藏并自由调整左右顺序。
+- **CodexMeter 风格指示器与剩余配额展示**：默认展示**剩余配额百分比**，提供**同心双环（外环剩余配额 / 内蓝环剩余时间）+ 百分比**、**横向进度条**、**双进度条**、**底部紧凑条**、**双层纯文字**与**仅双环** 6 种菜单栏呈现形式，支持按分段独立覆盖样式。
+- **分段独立点击详情弹窗**：点击菜单栏对应分段（Claude / ChatGPT / Antigravity / DeepSeek），即在该分段正下方弹出该服务专属的原生毛玻璃详情面板，包含剩余配额与剩余时间进度条、消耗进度状态（进度正常 / 超出进度）、重置倒计时、周期历史缩略图及近 30 天 Token 活动柱状图。
+- **纯本地 CLI 与已登录凭证驱动**：
+  - **Claude**：调用本地 `claude -p "/usage" --output-format json --no-session-persistence` 与 `claude auth status`。
+  - **ChatGPT**：调用本地 `codex app-server --listen stdio://` 读取 `account/read`、`account/rateLimits/read` 与 `account/usage/read`（含近 30 天每日 Token 活动）。
+  - **Antigravity**：调用本地 `agy -p "/usage" --output-format json` 读取各模型组的 5 小时与每周剩余限额。
+  - **DeepSeek (DSH)**：自动读取本地 `~/.dsh/.credentials.yaml` 中已登录的 DSH 平台账户授权，查询充值余额、赠送余额与历史累计消耗（同时保留备用 API Key 与自定义 CLI 支持）。
+- **Liquid Glass 用量历史窗口与通知提醒**：内置独立的全尺寸用量历史窗口（支持当前周期 / 近 7 天 / 14 天 / 30 天趋势曲线、Token 活动图表与 CSV 导出）以及低配额 / 超速本地通知提醒。
 
-## 环境要求
-
-- macOS 13.0 或更高版本（macOS 26+ 原生启用 Liquid Glass 液态玻璃材质）
-- Swift 5.9+（Command Line Tools 或 Xcode）
-- 按需安装并登录本地 CLI：`claude`、`codex`、`agy`（以及系统自带 `curl` 或自定义 DeepSeek CLI）
-
-## 编译、自检与运行
+## 编译、自检与安装
 
 ```bash
-# 打包并签名生成 dist/UsageCenter.app
+# 编译 Release 并签名打包 dist/UsageCenter.app
 chmod +x Scripts/build_app.sh
 ./Scripts/build_app.sh
 
-# 运行解析断言与本机 CLI 联调自检
+# 运行 SVG、解析器与本机四项服务实时联调自检
 ./dist/UsageCenter.app/Contents/MacOS/UsageCenter --self-check
 
-# 启动菜单栏应用
-open dist/UsageCenter.app
+# 安装至系统应用程序目录并启动
+ditto dist/UsageCenter.app /Applications/UsageCenter.app
+open /Applications/UsageCenter.app
 ```
 
 ## 许可证

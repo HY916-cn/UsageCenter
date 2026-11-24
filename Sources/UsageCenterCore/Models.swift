@@ -20,9 +20,9 @@ public enum ProviderID: String, CaseIterable, Codable, Identifiable, Sendable {
     public var shortLabel: String {
         switch self {
         case .claude: return "Claude"
-        case .chatgpt: return "GPT"
+        case .chatgpt: return "Codex"
         case .antigravity: return "AGY"
-        case .deepseek: return "DS"
+        case .deepseek: return "DSH"
         }
     }
 
@@ -40,7 +40,7 @@ public enum ProviderID: String, CaseIterable, Codable, Identifiable, Sendable {
         case .claude: return "claude -p \"/usage\" --output-format json"
         case .chatgpt: return "codex app-server --listen stdio://"
         case .antigravity: return "agy -p \"/usage\" --output-format json"
-        case .deepseek: return "curl https://api.deepseek.com/user/balance"
+        case .deepseek: return "~/.dsh/.credentials.yaml · DSH 平台账户"
         }
     }
 
@@ -67,7 +67,7 @@ public enum QuotaAttentionLevel: Equatable, Sendable {
     case critical
 }
 
-public struct QuotaWindow: Identifiable, Equatable, Sendable {
+public struct QuotaWindow: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public let groupID: String?
     public let groupName: String?
@@ -109,8 +109,8 @@ public struct QuotaWindow: Identifiable, Equatable, Sendable {
 
     public func displayPercent(mode: QuotaPercentMode) -> Int {
         switch mode {
-        case .used: return usedPercent
         case .remaining: return remainingPercent
+        case .used: return usedPercent
         }
     }
 
@@ -119,14 +119,9 @@ public struct QuotaWindow: Identifiable, Equatable, Sendable {
             return nil
         }
         let remainingSeconds = resetsAt.timeIntervalSince(now)
-        guard remainingSeconds >= 0 else { return 0 }
+        guard remainingSeconds >= 0 else { return nil }
         let totalSeconds = Double(durationMinutes) * 60.0
         return min(100, max(0, remainingSeconds / totalSeconds * 100.0))
-    }
-
-    public func elapsedTimePercent(at now: Date) -> Double? {
-        guard let rem = remainingTimePercent(at: now) else { return nil }
-        return min(100, max(0, 100.0 - rem))
     }
 
     public func pace(at now: Date) -> ConsumptionPace {
@@ -136,8 +131,15 @@ public struct QuotaWindow: Identifiable, Equatable, Sendable {
         return Double(remainingPercent) >= remainingTime ? .onTrack : .overPace
     }
 
-    public func attentionLevel(at now: Date, lowRemainingThreshold: Int = 20) -> QuotaAttentionLevel {
-        if remainingPercent <= lowRemainingThreshold {
+    public func paceDelta(at now: Date) -> Double? {
+        guard let remainingTime = remainingTimePercent(at: now) else {
+            return nil
+        }
+        return Double(remainingPercent) - remainingTime
+    }
+
+    public func attentionLevel(at now: Date, criticalBelow threshold: Int = 20) -> QuotaAttentionLevel {
+        if remainingPercent < threshold {
             return .critical
         }
         return pace(at: now) == .overPace ? .warning : .normal
@@ -148,10 +150,8 @@ public struct QuotaWindow: Identifiable, Equatable, Sendable {
         case .hidden:
             return nil
         case .countdown:
-            if let resetsAt {
-                return TimeFormatting.compactCountdown(until: resetsAt, from: now)
-            }
-            return nil
+            guard let resetsAt else { return nil }
+            return TimeFormatting.compactCountdown(until: resetsAt, from: now)
         case .clock:
             if let resetsAt {
                 return TimeFormatting.compactResetClock(resetsAt, kind: kind, now: now)
@@ -161,23 +161,26 @@ public struct QuotaWindow: Identifiable, Equatable, Sendable {
     }
 }
 
-public struct DeepSeekBalanceItem: Identifiable, Equatable, Sendable {
+public struct DeepSeekBalanceItem: Identifiable, Codable, Equatable, Sendable {
     public var id: String { currency }
     public let currency: String
     public let totalBalance: String
     public let grantedBalance: String
     public let toppedUpBalance: String
+    public let totalHistoricalCost: String?
 
     public init(
         currency: String,
         totalBalance: String,
         grantedBalance: String = "0.00",
-        toppedUpBalance: String = "0.00"
+        toppedUpBalance: String = "0.00",
+        totalHistoricalCost: String? = nil
     ) {
         self.currency = currency.uppercased()
         self.totalBalance = totalBalance
         self.grantedBalance = grantedBalance
         self.toppedUpBalance = toppedUpBalance
+        self.totalHistoricalCost = totalHistoricalCost
     }
 
     public var currencySymbol: String {
@@ -193,8 +196,66 @@ public struct DeepSeekBalanceItem: Identifiable, Equatable, Sendable {
         "\(currencySymbol)\(totalBalance)"
     }
 
+    public var formattedToppedUp: String {
+        "\(currencySymbol)\(toppedUpBalance)"
+    }
+
+    public var formattedGranted: String {
+        "\(currencySymbol)\(grantedBalance)"
+    }
+
+    public var formattedTotalCost: String? {
+        guard let totalHistoricalCost else { return nil }
+        return "\(currencySymbol)\(totalHistoricalCost)"
+    }
+
     public var numericTotal: Double {
         Double(totalBalance) ?? 0
+    }
+}
+
+public struct TokenDailyPoint: Identifiable, Codable, Equatable, Sendable {
+    public var id: String { startDate }
+    public let startDate: String
+    public let tokens: Int64
+
+    public init(startDate: String, tokens: Int64) {
+        self.startDate = startDate
+        self.tokens = tokens
+    }
+
+    public var parsedDate: Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: startDate)
+    }
+}
+
+public struct TokenActivitySnapshot: Codable, Equatable, Sendable {
+    public let dailyBuckets: [TokenDailyPoint]
+    public let lifetimeTokens: Int64?
+    public let peakDailyTokens: Int64?
+    public let currentStreakDays: Int64?
+
+    public init(
+        dailyBuckets: [TokenDailyPoint],
+        lifetimeTokens: Int64? = nil,
+        peakDailyTokens: Int64? = nil,
+        currentStreakDays: Int64? = nil
+    ) {
+        self.dailyBuckets = dailyBuckets
+        self.lifetimeTokens = lifetimeTokens
+        self.peakDailyTokens = peakDailyTokens
+        self.currentStreakDays = currentStreakDays
+    }
+
+    public var last30DaysBuckets: [TokenDailyPoint] {
+        Array(dailyBuckets.sorted { $0.startDate < $1.startDate }.suffix(30))
+    }
+
+    public var last30DaysTotal: Int64 {
+        last30DaysBuckets.reduce(0) { $0 + $1.tokens }
     }
 }
 
@@ -203,6 +264,7 @@ public struct ProviderSnapshot: Equatable, Sendable {
     public var accountLabel: String?
     public var windows: [QuotaWindow]
     public var balances: [DeepSeekBalanceItem]
+    public var tokenActivity: TokenActivitySnapshot?
     public var isAvailable: Bool?
     public var updatedAt: Date?
     public var isLoading: Bool
@@ -214,6 +276,7 @@ public struct ProviderSnapshot: Equatable, Sendable {
         accountLabel: String? = nil,
         windows: [QuotaWindow] = [],
         balances: [DeepSeekBalanceItem] = [],
+        tokenActivity: TokenActivitySnapshot? = nil,
         isAvailable: Bool? = nil,
         updatedAt: Date? = nil,
         isLoading: Bool = false,
@@ -224,6 +287,7 @@ public struct ProviderSnapshot: Equatable, Sendable {
         self.accountLabel = accountLabel
         self.windows = windows
         self.balances = balances
+        self.tokenActivity = tokenActivity
         self.isAvailable = isAvailable
         self.updatedAt = updatedAt
         self.isLoading = isLoading
@@ -292,10 +356,30 @@ public struct ProviderSnapshot: Equatable, Sendable {
     }
 }
 
+public enum CompactTokenFormatter {
+    public static func format(_ value: Int64) -> String {
+        let absVal = Double(abs(value))
+        let sign = value < 0 ? "-" : ""
+        if absVal >= 1_000_000_000 {
+            return String(format: "%@%.1fB", sign, absVal / 1_000_000_000)
+                .replacingOccurrences(of: ".0B", with: "B")
+        }
+        if absVal >= 1_000_000 {
+            return String(format: "%@%.1fM", sign, absVal / 1_000_000)
+                .replacingOccurrences(of: ".0M", with: "M")
+        }
+        if absVal >= 1_000 {
+            return String(format: "%@%.1fk", sign, absVal / 1_000)
+                .replacingOccurrences(of: ".0k", with: "k")
+        }
+        return "\(value)"
+    }
+}
+
 public enum TimeFormatting {
     public static func compactCountdown(until target: Date, from now: Date) -> String {
         let seconds = Int(target.timeIntervalSince(now))
-        guard seconds > 0 else { return "即将重置" }
+        guard seconds > 0 else { return "即将" }
         let days = seconds / 86_400
         let hours = (seconds % 86_400) / 3_600
         let minutes = (seconds % 3_600) / 60
@@ -329,7 +413,7 @@ public enum TimeFormatting {
         if kind == .fiveHour || Calendar.current.isDate(date, inSameDayAs: now) {
             formatter.dateFormat = "HH:mm"
         } else {
-            formatter.dateFormat = "MM-dd HH:mm"
+            formatter.dateFormat = "MM-dd"
         }
         return formatter.string(from: date)
     }
@@ -337,7 +421,7 @@ public enum TimeFormatting {
     public static func fullDateTime(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "MM-dd HH:mm"
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
         return formatter.string(from: date)
     }
 

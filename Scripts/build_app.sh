@@ -10,14 +10,21 @@ echo "==> Building ${APP_NAME} (Release)..."
 cd "${ROOT_DIR}"
 swift build -c release
 
-BIN_PATH="$(swift build -c release --show-bin-path)/${APP_NAME}"
+BIN_DIR="$(swift build -c release --show-bin-path)"
+BIN_PATH="${BIN_DIR}/${APP_NAME}"
 
 rm -rf "${APP_BUNDLE}"
 mkdir -p "${APP_BUNDLE}/Contents/MacOS"
-mkdir -p "${APP_BUNDLE}/Contents/Resources"
+mkdir -p "${APP_BUNDLE}/Contents/Resources/Icons"
 
 cp "${BIN_PATH}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
+
+# Copy official SVG assets directly into Contents/Resources/Icons and SwiftPM resource bundle if present
+cp "${ROOT_DIR}/Sources/UsageCenter/Resources/Icons/"*.svg "${APP_BUNDLE}/Contents/Resources/Icons/"
+if [ -d "${BIN_DIR}/UsageCenter_UsageCenter.bundle" ]; then
+    cp -R "${BIN_DIR}/UsageCenter_UsageCenter.bundle" "${APP_BUNDLE}/Contents/Resources/"
+fi
 
 cat > "${APP_BUNDLE}/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -39,9 +46,9 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>1.1.0</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>

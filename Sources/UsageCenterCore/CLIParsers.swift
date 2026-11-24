@@ -30,6 +30,69 @@ public enum ANSIStripper {
     }
 }
 
+// MARK: - DSH Local Credential Reader (~/.dsh/.credentials.yaml)
+
+public enum DSHCredentialReader {
+    public struct DSHGrant: Equatable, Sendable {
+        public let token: String
+        public let issuer: String
+    }
+
+    public static func readDefaultGrant(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> DSHGrant? {
+        let credURL = homeDirectory.appendingPathComponent(".dsh/.credentials.yaml")
+        guard let content = try? String(contentsOf: credURL, encoding: .utf8) else {
+            return nil
+        }
+        return parseYAMLGrant(content)
+    }
+
+    public static func parseYAMLGrant(_ yaml: String) -> DSHGrant? {
+        let lines = yaml.components(separatedBy: .newlines)
+        var inPlatformSection = false
+        var platformIndent = -1
+        var token: String?
+        var issuer = "https://platform.deepseek.com"
+
+        for rawLine in lines {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+            let indent = rawLine.prefix { $0 == " " }.count
+
+            if trimmed.hasPrefix("deepseek-account-platform/default:") {
+                inPlatformSection = true
+                platformIndent = indent
+                continue
+            }
+
+            if inPlatformSection {
+                if indent <= platformIndent {
+                    break
+                }
+                if trimmed.hasPrefix("token:") {
+                    let val = trimmed.dropFirst("token:".count)
+                        .trimmingCharacters(in: .whitespaces)
+                        .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                    if !val.isEmpty {
+                        token = val
+                    }
+                } else if trimmed.hasPrefix("issuer:") {
+                    let val = trimmed.dropFirst("issuer:".count)
+                        .trimmingCharacters(in: .whitespaces)
+                        .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                    if val.hasPrefix("https://") {
+                        issuer = val.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                    }
+                }
+            }
+        }
+
+        guard let token, !token.isEmpty else { return nil }
+        return DSHGrant(token: token, issuer: issuer)
+    }
+}
+
 // MARK: - Claude CLI Parser
 
 public enum ClaudeCLIParser {
@@ -73,7 +136,7 @@ public enum ClaudeCLIParser {
         let clean = ANSIStripper.strip(contentText)
         if clean.localizedCaseInsensitiveContains("not logged in")
             || clean.localizedCaseInsensitiveContains("please run /login") {
-            throw CLIParserError.unauthenticated("Claude CLI 未登录，请先在终端运行 claude login")
+            throw CLIParserError.unauthenticated("Claude CLI 未登录，请先在终端执行 claude login")
         }
 
         let windows = parseWindows(from: clean, referenceDate: referenceDate)
@@ -97,9 +160,6 @@ public enum ClaudeCLIParser {
     }
 
     private static func parseWindows(from text: String, referenceDate: Date) -> [QuotaWindow] {
-        // Matches e.g.:
-        // Current session: 0% used · resets Nov 25 at 4:30am (Asia/Shanghai)
-        // Current week (all models): 18% used · resets Nov 28 at 10pm (Asia/Shanghai)
         let pattern = #"^([^\n:]+):\s*(\d{1,3})%\s*(used|remaining|left)(?:\s*[·•\-|]\s*resets\s+(.+))?$"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines, .caseInsensitive]) else {
             return []
@@ -136,7 +196,7 @@ public enum ClaudeCLIParser {
             if lower.contains("session") || lower.contains("5-hour") || lower.contains("5 hour") || lower.contains("five hour") {
                 kind = .fiveHour
                 duration = 300
-                title = "5小时会话"
+                title = "5小时配额"
             } else if lower.contains("week") {
                 if lower.contains("all models") || !windows.contains(where: { $0.kind == .weekly }) {
                     kind = .weekly
@@ -148,9 +208,9 @@ public enum ClaudeCLIParser {
                    let parenEnd = rawLabel.lastIndex(of: ")"),
                    parenStart < parenEnd {
                     let inner = rawLabel[rawLabel.index(after: parenStart)..<parenEnd]
-                    title = inner.lowercased() == "all models" ? "每周限额" : "每周 (\(inner))"
+                    title = inner.lowercased() == "all models" ? "每周配额" : "每周配额 (\(inner))"
                 } else {
-                    title = "每周限额"
+                    title = "每周配额"
                 }
             } else {
                 kind = .other
@@ -196,7 +256,6 @@ public enum ClaudeCLIParser {
         calendar.timeZone = timeZone
         let refYear = calendar.component(.year, from: referenceDate)
 
-        // Case 1: "Nov 25 at 4:30am" or "Nov 25 at 10pm" or "Nov 25, 2026 at 10:00pm"
         let monthFormats = [
             "MMM d 'at' h:mma",
             "MMM d 'at' ha",
@@ -230,7 +289,6 @@ public enum ClaudeCLIParser {
             }
         }
 
-        // Case 2: Time only e.g. "4:30am" or "at 4:30am" or "10pm"
         let timeOnly = normalized.replacingOccurrences(of: #"^at\s+"#, with: "", options: .regularExpression)
         for format in ["h:mma", "ha", "HH:mm"] {
             let formatter = DateFormatter()
@@ -263,6 +321,7 @@ public enum CodexCLIParser {
     public static func parse(
         accountResult: [String: Any]?,
         rateLimitsResult: [String: Any],
+        usageResult: [String: Any]? = nil,
         referenceDate: Date = Date()
     ) throws -> ProviderSnapshot {
         var accountLabel = "ChatGPT"
@@ -298,11 +357,38 @@ public enum CodexCLIParser {
             throw CLIParserError.invalidFormat("Codex App Server 未返回配额窗口数据")
         }
 
+        let tokenActivity = usageResult.flatMap(parseTokenActivity)
+
         return ProviderSnapshot(
             provider: .chatgpt,
             accountLabel: accountLabel,
             windows: windows,
+            tokenActivity: tokenActivity,
             updatedAt: referenceDate
+        )
+    }
+
+    private static func parseTokenActivity(_ result: [String: Any]) -> TokenActivitySnapshot? {
+        var points: [TokenDailyPoint] = []
+        if let rawBuckets = result["dailyUsageBuckets"] as? [[String: Any]] {
+            points = rawBuckets.compactMap { row in
+                guard let dateStr = row["startDate"] as? String,
+                      let tokens = (row["tokens"] as? NSNumber)?.int64Value else {
+                    return nil
+                }
+                return TokenDailyPoint(startDate: dateStr, tokens: tokens)
+            }
+        }
+        let summary = result["summary"] as? [String: Any]
+        let lifetime = (summary?["lifetimeTokens"] as? NSNumber)?.int64Value
+        let peak = (summary?["peakDailyTokens"] as? NSNumber)?.int64Value
+        let streak = (summary?["currentStreakDays"] as? NSNumber)?.int64Value
+        if points.isEmpty && lifetime == nil { return nil }
+        return TokenActivitySnapshot(
+            dailyBuckets: points,
+            lifetimeTokens: lifetime,
+            peakDailyTokens: peak,
+            currentStreakDays: streak
         )
     }
 
@@ -346,13 +432,13 @@ public enum CodexCLIParser {
         switch duration {
         case 300:
             kind = isPrimaryBucket ? .fiveHour : .other
-            baseTitle = "5小时限额"
+            baseTitle = "5小时配额"
         case 10_080:
             kind = isPrimaryBucket ? .weekly : .other
-            baseTitle = "每周限额"
+            baseTitle = "每周配额"
         case let mins? where mins > 0:
             kind = .other
-            baseTitle = mins % 60 == 0 ? "\(mins / 60)小时限额" : "\(mins)分钟限额"
+            baseTitle = mins % 60 == 0 ? "\(mins / 60)小时配额" : "\(mins)分钟配额"
         default:
             kind = .other
             baseTitle = "配额窗口"
@@ -418,7 +504,7 @@ public enum AntigravityCLIParser {
 
         let clean = ANSIStripper.strip(rawText)
         if clean.localizedCaseInsensitiveContains("not signed in") {
-            throw CLIParserError.unauthenticated("Antigravity CLI 未登录，请先在终端运行 agy 完成登录")
+            throw CLIParserError.unauthenticated("Antigravity CLI 未登录，请先在终端运行 agy 登录")
         }
 
         let fallbackWindows = parsePlainLines(clean)
@@ -441,7 +527,6 @@ public enum AntigravityCLIParser {
             let groupDesc = group["description"] as? String
             guard let buckets = group["buckets"] as? [[String: Any]] else { continue }
 
-            // Put 5h before weekly within each group for consistent presentation
             let sortedBuckets = buckets.sorted { lhs, rhs in
                 let lw = (lhs["window"] as? String) ?? ""
                 let rw = (rhs["window"] as? String) ?? ""
@@ -466,11 +551,11 @@ public enum AntigravityCLIParser {
                 if windowCode == "5h" || id.contains("5h") {
                     kind = .fiveHour
                     duration = 300
-                    title = "5小时限额"
+                    title = "5小时配额"
                 } else if windowCode == "weekly" || id.contains("weekly") {
                     kind = .weekly
                     duration = 10_080
-                    title = "每周限额"
+                    title = "每周配额"
                 } else {
                     kind = .other
                     duration = nil
@@ -495,8 +580,6 @@ public enum AntigravityCLIParser {
     }
 
     private static func parsePlainLines(_ text: String) -> [QuotaWindow] {
-        // Matches e.g.:
-        // Gemini Models          Weekly Limit Remaining     98%   2026-12-01 23:22 CST
         let pattern = #"^(.+?)\s+(Weekly Limit Remaining|Five Hour Limit Remaining)\s+(\d{1,3})%\s+(.+)$"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines]) else {
             return []
@@ -523,7 +606,7 @@ public enum AntigravityCLIParser {
                 id: "agy-\(groupName.lowercased().replacingOccurrences(of: " ", with: "-"))-\(isFiveHour ? "5h" : "weekly")",
                 groupID: groupName.lowercased(),
                 groupName: groupName,
-                title: isFiveHour ? "5小时限额" : "每周限额",
+                title: isFiveHour ? "5小时配额" : "每周配额",
                 kind: isFiveHour ? .fiveHour : .weekly,
                 usedPercent: 100 - min(100, max(0, remPct)),
                 durationMinutes: isFiveHour ? 300 : 10_080,
@@ -554,11 +637,12 @@ public enum AntigravityCLIParser {
     }
 }
 
-// MARK: - DeepSeek CLI Balance Parser
+// MARK: - DeepSeek DSH Platform & API Balance Parser
 
 public enum DeepSeekCLIParser {
     public static func parseBalanceOutput(
         _ rawData: Data,
+        sourceLabel: String = "DSH 已登录账户",
         referenceDate: Date = Date()
     ) throws -> ProviderSnapshot {
         let rawText = String(data: rawData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -567,6 +651,33 @@ public enum DeepSeekCLIParser {
         }
 
         if let jsonObj = try? JSONSerialization.jsonObject(with: rawData) as? [String: Any] {
+            // 1. DSH Platform get_user_summary envelope:
+            // { "code": 0, "data": { "biz_code": 0, "biz_data": { "normal_wallets": [...], "bonus_wallets": [...], "total_costs": [...] } } }
+            if let code = (jsonObj["code"] as? NSNumber)?.intValue {
+                if code == 40003 {
+                    throw CLIParserError.unauthenticated("DSH 登录令牌已过期，请在 DSH 中重新登录")
+                }
+                if code == 0,
+                   let dataObj = jsonObj["data"] as? [String: Any],
+                   let bizCode = (dataObj["biz_code"] as? NSNumber)?.intValue,
+                   bizCode == 0,
+                   let bizData = dataObj["biz_data"] as? [String: Any] {
+                    let items = parseDSHWallets(bizData)
+                    guard !items.isEmpty else {
+                        throw CLIParserError.invalidFormat("DSH 平台未返回有效钱包记录")
+                    }
+                    let hasPositive = items.contains { $0.numericTotal > 0 }
+                    return ProviderSnapshot(
+                        provider: .deepseek,
+                        accountLabel: sourceLabel,
+                        balances: items,
+                        isAvailable: hasPositive,
+                        updatedAt: referenceDate
+                    )
+                }
+            }
+
+            // 2. Standard OpenAPI /user/balance response:
             if let errorObj = jsonObj["error"] as? [String: Any],
                let msg = errorObj["message"] as? String {
                 throw CLIParserError.unauthenticated("DeepSeek API 错误：\(msg)")
@@ -575,11 +686,11 @@ public enum DeepSeekCLIParser {
                 let isAvailable = jsonObj["is_available"] as? Bool
                 let balances = infos.compactMap { item -> DeepSeekBalanceItem? in
                     guard let currency = item["currency"] as? String,
-                          let total = stringValue(item["total_balance"]) else {
+                          let total = formatDecimalString(item["total_balance"]) else {
                         return nil
                     }
-                    let granted = stringValue(item["granted_balance"]) ?? "0.00"
-                    let toppedUp = stringValue(item["topped_up_balance"]) ?? "0.00"
+                    let granted = formatDecimalString(item["granted_balance"]) ?? "0.00"
+                    let toppedUp = formatDecimalString(item["topped_up_balance"]) ?? "0.00"
                     return DeepSeekBalanceItem(
                         currency: currency,
                         totalBalance: total,
@@ -592,7 +703,7 @@ public enum DeepSeekCLIParser {
                 }
                 return ProviderSnapshot(
                     provider: .deepseek,
-                    accountLabel: (isAvailable == false) ? "余额不足" : "API 账户正常",
+                    accountLabel: sourceLabel,
                     balances: balances,
                     isAvailable: isAvailable,
                     updatedAt: referenceDate
@@ -600,7 +711,7 @@ public enum DeepSeekCLIParser {
             }
         }
 
-        // Plain-text fallback for custom CLI scripts e.g. "¥18.50" or "CNY 18.50" or "12.34"
+        // 3. Plain-text fallback for custom CLI scripts
         let clean = ANSIStripper.strip(rawText)
         if let regex = try? NSRegularExpression(pattern: #"(¥|\$|CNY|USD)?\s*([0-9]+(?:\.[0-9]+)?)"#, options: .caseInsensitive),
            let match = regex.firstMatch(in: clean, range: NSRange(clean.startIndex..., in: clean)),
@@ -611,7 +722,7 @@ public enum DeepSeekCLIParser {
                 let token = clean[curRange].uppercased()
                 currency = (token == "$" || token == "USD") ? "USD" : "CNY"
             }
-            let amount = String(clean[numRange])
+            let amount = formatDecimalString(String(clean[numRange])) ?? "0.00"
             return ProviderSnapshot(
                 provider: .deepseek,
                 accountLabel: "自定义 CLI",
@@ -621,12 +732,83 @@ public enum DeepSeekCLIParser {
             )
         }
 
-        throw CLIParserError.invalidFormat("无法解析 DeepSeek 余额输出")
+        throw CLIParserError.invalidFormat("无法解析 DeepSeek 额度输出")
     }
 
-    private static func stringValue(_ any: Any?) -> String? {
-        if let s = any as? String { return s }
-        if let n = any as? NSNumber { return String(format: "%.2f", n.doubleValue) }
+    private static func parseDSHWallets(_ bizData: [String: Any]) -> [DeepSeekBalanceItem] {
+        let normalList = (bizData["normal_wallets"] as? [[String: Any]]) ?? []
+        let bonusList = (bizData["bonus_wallets"] as? [[String: Any]]) ?? []
+        let costList = (bizData["total_costs"] as? [[String: Any]]) ?? []
+
+        var currencies: [String] = []
+        var normalByCur: [String: Decimal] = [:]
+        var bonusByCur: [String: Decimal] = [:]
+        var costByCur: [String: Decimal] = [:]
+
+        func registerCurrency(_ cur: String) {
+            let upper = cur.uppercased()
+            if !currencies.contains(upper) {
+                currencies.append(upper)
+            }
+        }
+
+        for row in normalList {
+            guard let cur = row["currency"] as? String else { continue }
+            registerCurrency(cur)
+            normalByCur[cur.uppercased(), default: 0] += decimalValue(row["balance"])
+        }
+        for row in bonusList {
+            guard let cur = row["currency"] as? String else { continue }
+            registerCurrency(cur)
+            bonusByCur[cur.uppercased(), default: 0] += decimalValue(row["balance"])
+        }
+        for row in costList {
+            guard let cur = row["currency"] as? String else { continue }
+            costByCur[cur.uppercased(), default: 0] += decimalValue(row["amount"])
+        }
+
+        return currencies.map { cur in
+            let toppedUp = normalByCur[cur] ?? 0
+            let granted = bonusByCur[cur] ?? 0
+            let total = toppedUp + granted
+            let cost = costByCur[cur]
+            return DeepSeekBalanceItem(
+                currency: cur,
+                totalBalance: formatTwoDecimals(total),
+                grantedBalance: formatTwoDecimals(granted),
+                toppedUpBalance: formatTwoDecimals(toppedUp),
+                totalHistoricalCost: cost.map(formatTwoDecimals)
+            )
+        }
+    }
+
+    private static func decimalValue(_ any: Any?) -> Decimal {
+        if let str = any as? String, let dec = Decimal(string: str, locale: Locale(identifier: "en_US_POSIX")) {
+            return dec
+        }
+        if let num = any as? NSNumber {
+            return num.decimalValue
+        }
+        return 0
+    }
+
+    private static func formatDecimalString(_ any: Any?) -> String? {
+        if let str = any as? String, let dec = Decimal(string: str, locale: Locale(identifier: "en_US_POSIX")) {
+            return formatTwoDecimals(dec)
+        }
+        if let num = any as? NSNumber {
+            return formatTwoDecimals(num.decimalValue)
+        }
         return nil
+    }
+
+    private static func formatTwoDecimals(_ value: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = false
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 2
+        return formatter.string(from: value as NSDecimalNumber) ?? "0.00"
     }
 }

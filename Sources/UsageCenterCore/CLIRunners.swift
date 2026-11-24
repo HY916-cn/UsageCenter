@@ -84,7 +84,7 @@ public enum CLIRunnerError: LocalizedError {
         case .executionFailed(let message):
             return message
         case .missingDeepSeekCredentials:
-            return "尚未配置 DeepSeek API Key，请在设置中填入 Key 或配置本地 CLI 命令"
+            return "未检测到本地 DSH 登录凭证（~/.dsh/.credentials.yaml），请先在 DSH 登录或在设置中填入 API Key"
         }
     }
 }
@@ -229,14 +229,16 @@ private final class LockedCodexRPCState: @unchecked Sendable {
     struct StepOutcome {
         var shouldSendFollowups = false
         var fatalError: String?
-        var completedPayload: (account: [String: Any]?, rateLimits: [String: Any])?
+        var completedPayload: (account: [String: Any]?, rateLimits: [String: Any], usage: [String: Any]?)?
     }
 
     private let lock = NSLock()
     private var lineBuffer = Data()
     private var accountResult: [String: Any]?
     private var rateLimitsResult: [String: Any]?
-    private var nonFatalAccountError: String?
+    private var usageResult: [String: Any]?
+    private var accountDone = false
+    private var usageDone = false
     private var didSendFollowups = false
     private var completed = false
 
@@ -248,10 +250,10 @@ private final class LockedCodexRPCState: @unchecked Sendable {
         return true
     }
 
-    func partialResults() -> (account: [String: Any]?, rateLimits: [String: Any]?) {
+    func partialResults() -> (account: [String: Any]?, rateLimits: [String: Any]?, usage: [String: Any]?) {
         lock.lock()
         defer { lock.unlock() }
-        return (accountResult, rateLimitsResult)
+        return (accountResult, rateLimitsResult, usageResult)
     }
 
     func ingest(_ chunk: Data) -> StepOutcome {
@@ -274,8 +276,10 @@ private final class LockedCodexRPCState: @unchecked Sendable {
                 let msg = (err["message"] as? String) ?? "Codex RPC 请求失败"
                 if id == 1 || id == 3 {
                     outcome.fatalError = msg
-                } else {
-                    nonFatalAccountError = msg
+                } else if id == 2 {
+                    accountDone = true
+                } else if id == 4 {
+                    usageDone = true
                 }
                 continue
             }
@@ -286,13 +290,17 @@ private final class LockedCodexRPCState: @unchecked Sendable {
                 outcome.shouldSendFollowups = true
             } else if id == 2 {
                 accountResult = res
+                accountDone = true
             } else if id == 3 {
                 rateLimitsResult = res
+            } else if id == 4 {
+                usageResult = res
+                usageDone = true
             }
         }
 
-        if let rl = rateLimitsResult, accountResult != nil || nonFatalAccountError != nil {
-            outcome.completedPayload = (account: accountResult, rateLimits: rl)
+        if let rl = rateLimitsResult, accountDone, usageDone {
+            outcome.completedPayload = (account: accountResult, rateLimits: rl, usage: usageResult)
         }
         return outcome
     }
@@ -370,7 +378,8 @@ public enum ProviderUsageFetcher {
         let responses = try await queryCodexAppServer(executableURL: url, timeoutSeconds: 18)
         return try CodexCLIParser.parse(
             accountResult: responses.account,
-            rateLimitsResult: responses.rateLimits
+            rateLimitsResult: responses.rateLimits,
+            usageResult: responses.usage
         )
     }
 
@@ -379,54 +388,72 @@ public enum ProviderUsageFetcher {
         customCommand: String = "",
         keyOverride: String? = nil
     ) async throws -> ProviderSnapshot {
-        let resolvedKey = resolveDeepSeekKey(override: keyOverride)
         let trimmedCommand = customCommand.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        // 1. Optional custom local CLI command
         if !trimmedCommand.isEmpty {
             let zsh = URL(fileURLWithPath: "/bin/zsh")
-            var env = ExecutableLocator.enrichedEnvironment()
-            if let resolvedKey, !resolvedKey.isEmpty {
-                env["DEEPSEEK_API_KEY"] = resolvedKey
-            }
             let result = try await LocalProcessRunner.run(
                 executableURL: zsh,
                 arguments: ["-lc", trimmedCommand],
-                environment: env,
                 timeoutSeconds: 20
             )
             guard result.exitCode == 0 || !result.stdout.isEmpty else {
                 throw CLIRunnerError.executionFailed("自定义 DeepSeek CLI 命令执行失败（退出码 \(result.exitCode)）")
             }
-            return try DeepSeekCLIParser.parseBalanceOutput(result.stdout)
-        }
-
-        guard let apiKey = resolvedKey, !apiKey.isEmpty else {
-            throw CLIRunnerError.missingDeepSeekCredentials
+            return try DeepSeekCLIParser.parseBalanceOutput(result.stdout, sourceLabel: "自定义 CLI")
         }
 
         guard let curlURL = ExecutableLocator.locate(binaryName: "curl", customPath: customPath) else {
             throw CLIRunnerError.binaryNotFound("curl")
         }
 
-        let escapedKey = apiKey.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        let curlConfig = """
-        url = "https://api.deepseek.com/user/balance"
-        header = "Authorization: Bearer \(escapedKey)"
-        header = "Accept: application/json"
-        """
-        let result = try await LocalProcessRunner.run(
-            executableURL: curlURL,
-            arguments: ["--silent", "--show-error", "--location", "--max-time", "15", "--config", "-"],
-            stdinData: Data(curlConfig.utf8),
-            timeoutSeconds: 18
-        )
-        if result.stdout.isEmpty, result.exitCode != 0 {
-            throw CLIRunnerError.executionFailed("curl 请求 DeepSeek 余额失败（退出码 \(result.exitCode)）")
+        // 2. Primary: Read signed-in DSH account grant from ~/.dsh/.credentials.yaml
+        if let dshGrant = DSHCredentialReader.readDefaultGrant() {
+            let escapedTok = dshGrant.token
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            let curlConfig = """
+            url = "\(dshGrant.issuer)/api/v0/users/get_user_summary"
+            header = "x-dsh-auth-token: \(escapedTok)"
+            header = "Accept: application/json"
+            """
+            let result = try await LocalProcessRunner.run(
+                executableURL: curlURL,
+                arguments: ["--silent", "--show-error", "--max-time", "15", "--config", "-"],
+                stdinData: Data(curlConfig.utf8),
+                timeoutSeconds: 18
+            )
+            if !result.stdout.isEmpty {
+                return try DeepSeekCLIParser.parseBalanceOutput(result.stdout, sourceLabel: "DSH 已登录账户")
+            }
         }
-        return try DeepSeekCLIParser.parseBalanceOutput(result.stdout)
+
+        // 3. Fallback: Keychain / Environment DEEPSEEK_API_KEY
+        if let apiKey = resolveDeepSeekAPIKey(override: keyOverride), !apiKey.isEmpty {
+            let escapedKey = apiKey
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            let curlConfig = """
+            url = "https://api.deepseek.com/user/balance"
+            header = "Authorization: Bearer \(escapedKey)"
+            header = "Accept: application/json"
+            """
+            let result = try await LocalProcessRunner.run(
+                executableURL: curlURL,
+                arguments: ["--silent", "--show-error", "--max-time", "15", "--config", "-"],
+                stdinData: Data(curlConfig.utf8),
+                timeoutSeconds: 18
+            )
+            if !result.stdout.isEmpty {
+                return try DeepSeekCLIParser.parseBalanceOutput(result.stdout, sourceLabel: "DeepSeek API Key")
+            }
+        }
+
+        throw CLIRunnerError.missingDeepSeekCredentials
     }
 
-    private static func resolveDeepSeekKey(override: String?) -> String? {
+    private static func resolveDeepSeekAPIKey(override: String?) -> String? {
         if let override = override?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
             return override
         }
@@ -444,7 +471,7 @@ public enum ProviderUsageFetcher {
     private static func queryCodexAppServer(
         executableURL: URL,
         timeoutSeconds: TimeInterval
-    ) async throws -> (account: [String: Any]?, rateLimits: [String: Any]) {
+    ) async throws -> (account: [String: Any]?, rateLimits: [String: Any], usage: [String: Any]?) {
         try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             let inPipe = Pipe()
@@ -470,7 +497,7 @@ public enum ProviderUsageFetcher {
                 try? writer.write(contentsOf: data)
             }
 
-            @Sendable func finish(_ result: Result<(account: [String: Any]?, rateLimits: [String: Any]), Error>) {
+            @Sendable func finish(_ result: Result<(account: [String: Any]?, rateLimits: [String: Any], usage: [String: Any]?), Error>) {
                 guard rpcState.claimCompletion() else { return }
                 outPipe.fileHandleForReading.readabilityHandler = nil
                 errPipe.fileHandleForReading.readabilityHandler = nil
@@ -482,7 +509,12 @@ public enum ProviderUsageFetcher {
             }
 
             let timeoutWork = DispatchWorkItem {
-                finish(.failure(CLIRunnerError.timeout("codex app-server")))
+                let partial = rpcState.partialResults()
+                if let rl = partial.rateLimits {
+                    finish(.success((account: partial.account, rateLimits: rl, usage: partial.usage)))
+                } else {
+                    finish(.failure(CLIRunnerError.timeout("codex app-server")))
+                }
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + timeoutSeconds, execute: timeoutWork)
 
@@ -511,6 +543,7 @@ public enum ProviderUsageFetcher {
                     sendJSON(["method": "initialized", "params": [:]])
                     sendJSON(["method": "account/read", "id": 2, "params": ["refreshToken": false]])
                     sendJSON(["method": "account/rateLimits/read", "id": 3, "params": [:]])
+                    sendJSON(["method": "account/usage/read", "id": 4, "params": NSNull()])
                 }
 
                 if let payload = outcome.completedPayload {
@@ -523,7 +556,7 @@ public enum ProviderUsageFetcher {
                 timeoutWork.cancel()
                 let partial = rpcState.partialResults()
                 if let rl = partial.rateLimits {
-                    finish(.success((account: partial.account, rateLimits: rl)))
+                    finish(.success((account: partial.account, rateLimits: rl, usage: partial.usage)))
                 } else {
                     finish(.failure(CLIRunnerError.executionFailed("Codex App Server 提前退出（状态码 \(proc.terminationStatus)）")))
                 }
@@ -538,7 +571,7 @@ public enum ProviderUsageFetcher {
                         "clientInfo": [
                             "name": "usage_center",
                             "title": "UsageCenter",
-                            "version": "1.0.0"
+                            "version": "1.1.0"
                         ]
                     ]
                 ])

@@ -1,565 +1,605 @@
 import AppKit
+import Charts
 import SwiftUI
 import UsageCenterCore
 
+/// Dedicated popover for the clicked menu bar segment, directly matching
+/// CodexMeter's clean translucent divider-separated layout and proportions.
 struct ProviderDetailPopoverView: View {
+    let provider: ProviderID
     @ObservedObject var store: UsageCenterStore
     let onOpenSettings: () -> Void
-    let onClosePopover: () -> Void
-
-    private var activeProvider: ProviderID {
-        store.activeProvider
-    }
+    let onOpenHistory: (ProviderID) -> Void
+    @Environment(\.colorScheme) private var colorScheme
 
     private var snapshot: ProviderSnapshot {
-        store.snapshot(for: activeProvider)
+        store.snapshot(for: provider)
     }
 
-    private var accentColor: Color {
-        BrandIconRenderer.swiftUIAccent(for: activeProvider)
+    private var maxScreenPopoverHeight: CGFloat {
+        let visible = NSScreen.main?.visibleFrame.height ?? 820
+        return min(780, max(520, visible - 40))
     }
 
     var body: some View {
-        TimelineView(.periodic(from: Date(), by: 30)) { timeline in
-            ZStack {
-                LiquidBackdrop(accent: accentColor)
+        VStack(alignment: .leading, spacing: 14) {
+            headerSection
+                .layoutPriority(1)
 
-                VStack(alignment: .leading, spacing: 12) {
-                    providerSwitcherBar
-                    heroHeaderCard
-
-                    ScrollView {
-                        LiquidGlassStage(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 12) {
-                                detailBody(now: timeline.date)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .padding(.vertical, 2)
-                    }
-                    .frame(maxHeight: 430)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                    footerBar
-                }
-                .padding(14)
+            ScrollView {
+                scrollableBody
+                    .padding(.trailing, 4)
             }
+            .frame(maxHeight: maxScreenPopoverHeight - 130)
+            .fixedSize(horizontal: false, vertical: true)
+
+            bottomSection
+                .layoutPriority(1)
         }
-        .frame(width: 392)
+        .padding(16)
+        .frame(width: 386)
         .applyAppearancePreference(store.preferences.appearance)
-    }
-
-    // MARK: - Switcher Bar
-
-    private var providerSwitcherBar: some View {
-        let items = store.preferences.enabledSections.isEmpty
-            ? ProviderID.allCases
-            : store.preferences.enabledSections.map(\.provider)
-
-        return HStack(spacing: 6) {
-            ForEach(items) { provider in
-                let isSelected = (provider == activeProvider)
-                Button {
-                    withAnimation(.spring(response: 0.26, dampingFraction: 0.82)) {
-                        store.activeProvider = provider
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        BrandBadgeView(
-                            provider: provider,
-                            size: 14,
-                            iconMode: store.preferences.iconColorMode
-                        )
-                        Text(provider.displayName)
-                            .font(.caption.weight(isSelected ? .semibold : .medium))
-                            .lineLimit(1)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity)
-                    .background {
-                        if isSelected {
-                            Capsule()
-                                .fill(BrandIconRenderer.swiftUIAccent(for: provider).opacity(0.20))
-                        }
-                    }
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(isSelected ? .primary : .secondary)
-            }
+        .onAppear {
+            Task { await store.refresh(provider: provider) }
         }
-        .padding(4)
-        .liquidGlassCapsule()
     }
 
-    // MARK: - Hero Card
+    // MARK: - Header (CodexMeter style)
 
-    private var heroHeaderCard: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(accentColor.opacity(0.16))
-                    .frame(width: 40, height: 40)
-                BrandBadgeView(provider: activeProvider, size: 22, iconMode: .brand)
-            }
+    private var headerSection: some View {
+        HStack(spacing: 10) {
+            BrandBadgeView(provider: provider, size: 20, iconMode: .brand)
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(activeProvider.displayName)
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(provider.displayName)
+                    .font(.headline)
 
-                    if snapshot.isStale {
-                        Text("缓存数据")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(.orange.opacity(0.14), in: Capsule())
-                    }
-                }
-
-                Text(snapshot.accountLabel ?? activeProvider.cliMethodSummary)
+                Text(snapshot.accountLabel ?? "正在检查本地账户状态…")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
             }
 
             Spacer()
 
-            Button {
-                Task { await store.refresh(provider: activeProvider) }
-            } label: {
-                Group {
-                    if snapshot.isLoading {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                }
-                .frame(width: 28, height: 28)
-                .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .liquidGlassCapsule(interactive: true)
-            .help("刷新 \(activeProvider.displayName)")
-        }
-        .padding(12)
-        .liquidGlassCard(cornerRadius: 16)
-    }
-
-    // MARK: - Main Content
-
-    @ViewBuilder
-    private func detailBody(now: Date) -> some View {
-        if snapshot.isLoading && !snapshot.hasData {
-            HStack(spacing: 10) {
+            if store.isRefreshing(provider) {
                 ProgressView()
                     .controlSize(.small)
-                Text("正在通过本地 CLI 读取 \(activeProvider.displayName) 数据…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity, minHeight: 96)
-            .padding(14)
-            .liquidGlassCard(cornerRadius: 16)
-        } else if activeProvider == .deepseek {
-            deepSeekDetailSection
-        } else {
-            quotaDetailSection(now: now)
+
+            Button {
+                Task { await store.refresh(provider: provider) }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.plain)
+            .help("刷新 \(provider.displayName)")
+            .disabled(store.isRefreshing(provider))
         }
     }
 
-    @ViewBuilder
-    private func quotaDetailSection(now: Date) -> some View {
-        if let err = snapshot.errorMessage {
-            errorNoticeCard(err)
-        }
+    // MARK: - Scrollable Sections
 
-        if !snapshot.windows.isEmpty {
-            let grouped = groupedQuotaWindows(snapshot.windows)
-            ForEach(grouped, id: \.title) { group in
-                VStack(alignment: .leading, spacing: 12) {
-                    if let headerTitle = group.header {
-                        HStack {
-                            Text(headerTitle)
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(accentColor)
-                            Spacer()
-                            Text("共享 5h 与周限额")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
+    private var scrollableBody: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            if store.preferences.developerPreviewEnabled {
+                HStack {
+                    Label("开发者预览模式已启用", systemImage: "eye.trianglebadge.exclamationmark")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Button("返回实时数据") {
+                        store.preferences.developerPreviewEnabled = false
                     }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                }
+                .padding(8)
+                .background(.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+            }
 
-                    ForEach(Array(group.windows.enumerated()), id: \.element.id) { idx, window in
-                        if idx > 0 {
-                            Divider().opacity(0.35)
+            if snapshot.isStale {
+                Label("刷新失败，当前显示上次成功获取的缓存数据", systemImage: "clock.badge.exclamationmark")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+            }
+
+            Divider()
+
+            if snapshot.isLoading && !snapshot.hasData {
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("正在读取本地 \(provider.displayName) 数据…")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 110)
+            } else if let error = snapshot.errorMessage, !snapshot.hasData {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("无法读取数据", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 10) {
+                        Button("重试") {
+                            Task { await store.refresh(provider: provider) }
                         }
-                        QuotaWindowDetailRow(
-                            window: window,
-                            now: now,
-                            percentMode: store.preferences.percentMode,
-                            accent: accentColor
-                        )
+                        Button("配置 CLI…") {
+                            store.selectedSettingsCategory = .cliAndAccounts
+                            onOpenSettings()
+                        }
                     }
                 }
-                .padding(14)
-                .liquidGlassCard(cornerRadius: 16)
+                .frame(maxWidth: .infinity, minHeight: 110, alignment: .leading)
+            } else {
+                if let error = snapshot.errorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+
+                configuredPopoverSections
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var activePopoverSections: [PopoverSectionKind] {
+        store.preferences.visiblePopoverSections.filter { section in
+            switch section {
+            case .quotaDetails:
+                return snapshot.hasData
+            case .quotaHistory:
+                return true
+            case .tokenActivity:
+                return provider == .chatgpt && snapshot.tokenActivity != nil
             }
         }
     }
 
-    @ViewBuilder
-    private var deepSeekDetailSection: some View {
-        if let err = snapshot.errorMessage {
-            errorNoticeCard(err)
-        }
+    private var configuredPopoverSections: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            ForEach(Array(activePopoverSections.enumerated()), id: \.element.id) { idx, section in
+                if idx > 0 {
+                    Divider()
+                }
 
-        if !snapshot.balances.isEmpty {
-            ForEach(snapshot.balances) { item in
+                switch section {
+                case .quotaDetails:
+                    if provider == .deepseek {
+                        deepSeekDetailsSection
+                    } else {
+                        quotaWindowsSection
+                    }
+                case .quotaHistory:
+                    Button {
+                        onOpenHistory(provider)
+                    } label: {
+                        popoverHistorySection
+                    }
+                    .buttonStyle(.plain)
+                case .tokenActivity:
+                    if let tokens = snapshot.tokenActivity {
+                        Button {
+                            onOpenHistory(provider)
+                        } label: {
+                            popoverTokenSection(tokens)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Quota Windows (CodexMeter UsageWindowRow + MetricBar)
+
+    private var quotaWindowsSection: some View {
+        TimelineView(.periodic(from: Date(), by: 60)) { context in
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(Array(snapshot.windows.enumerated()), id: \.element.id) { idx, window in
+                    if idx > 0 {
+                        Divider()
+                    }
+                    CodexStyleWindowRow(
+                        window: window,
+                        now: context.date,
+                        percentMode: store.preferences.percentMode,
+                        lowThreshold: store.preferences.lowQuotaThreshold
+                    )
+                }
+            }
+        }
+    }
+
+    // MARK: - DeepSeek DSH Wallet Section
+
+    private var deepSeekDetailsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(Array(snapshot.balances.enumerated()), id: \.element.id) { idx, item in
+                if idx > 0 {
+                    Divider()
+                }
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(alignment: .firstTextBaseline) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("API 账户总余额 (\(item.currency))")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(item.formattedTotal)
-                                .font(.system(size: 28, weight: .bold, design: .rounded).monospacedDigit())
-                                .foregroundStyle(accentColor)
-                        }
+                        Text("账户可用额度 (\(item.currency))")
+                            .font(.subheadline.weight(.semibold))
 
                         Spacer()
 
-                        let available = snapshot.isAvailable ?? (item.numericTotal > 0)
-                        Label(available ? "服务可用" : "余额不足", systemImage: available ? "checkmark.seal.fill" : "xmark.octagon.fill")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(available ? .green : .red)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background((available ? Color.green : Color.red).opacity(0.14), in: Capsule())
+                        let ok = snapshot.isAvailable ?? (item.numericTotal > 0)
+                        Label(ok ? "额度正常" : "余额不足", systemImage: ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(ok ? .green : .orange)
                     }
 
-                    HStack(spacing: 10) {
-                        balanceBreakdownPill(
-                            title: "充值余额 (Topped-up)",
-                            value: "\(item.currencySymbol)\(item.toppedUpBalance)"
-                        )
-                        balanceBreakdownPill(
-                            title: "赠送余额 (Granted)",
-                            value: "\(item.currencySymbol)\(item.grantedBalance)"
-                        )
+                    HStack(alignment: .lastTextBaseline) {
+                        Text(item.formattedTotal)
+                            .font(.system(size: 28, weight: .bold, design: .rounded).monospacedDigit())
+                        Spacer()
+                        Text("可用总余额")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    ProgressView(value: min(100, max(2, item.numericTotal)), total: 100)
+                        .tint(item.numericTotal < 10 ? .orange : CodexPalette.timeSwiftUIColor(for: colorScheme))
+                        .id(colorScheme)
+
+                    VStack(spacing: 7) {
+                        walletMetricRow(symbol: "creditcard", title: "充值余额 (Topped-up)", value: item.formattedToppedUp)
+                        walletMetricRow(symbol: "gift", title: "赠送余额 (Bonus)", value: item.formattedGranted)
+                        if let totalCost = item.formattedTotalCost {
+                            walletMetricRow(symbol: "chart.line.uptrend.xyaxis", title: "历史累计消耗", value: totalCost)
+                        }
                     }
                 }
-                .padding(14)
-                .liquidGlassCard(cornerRadius: 16)
             }
-        }
-
-        if !store.hasStoredDeepSeekKey && store.preferences.deepSeekCustomCommand.isEmpty {
-            VStack(alignment: .leading, spacing: 9) {
-                Label("快捷配置 DeepSeek API Key", systemImage: "key.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(accentColor)
-
-                Text("密钥仅保存在 macOS 系统钥匙串中，并通过本地 curl 标准输入安全请求余额接口。")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 8) {
-                    SecureField("粘贴 sk-... API Key", text: $store.deepSeekAPIKeyInput)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.caption)
-
-                    Button("保存并查询") {
-                        store.saveDeepSeekKey()
-                    }
-                    .controlSize(.small)
-                    .disabled(store.deepSeekAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-            .padding(14)
-            .liquidGlassCard(cornerRadius: 16)
         }
     }
 
-    private func balanceBreakdownPill(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(.caption2)
+    private func walletMetricRow(symbol: String, title: String, value: String) -> some View {
+        HStack {
+            Label(title, systemImage: symbol)
                 .foregroundStyle(.secondary)
+            Spacer()
             Text(value)
-                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .fontWeight(.medium)
+                .monospacedDigit()
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .font(.caption)
     }
 
-    private func errorNoticeCard(_ message: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("CLI 数据读取提示", systemImage: "exclamationmark.triangle.fill")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.orange)
+    // MARK: - Mini Quota / Balance History Chart (CodexMeter Popover Section)
 
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+    private var popoverHistorySection: some View {
+        let points = store.historyPoints(for: provider, windowID: nil, range: .currentCycle)
 
-            HStack(spacing: 10) {
-                Button("重试") {
-                    Task { await store.refresh(provider: activeProvider) }
-                }
-                .controlSize(.small)
-
-                Button("打开 CLI 设置…") {
-                    store.selectedSettingsTab = .cli
-                    onOpenSettings()
-                }
-                .controlSize(.small)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .liquidGlassCard(cornerRadius: 16)
-    }
-
-    // MARK: - Footer
-
-    private var footerBar: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 1) {
-                if let updatedAt = snapshot.updatedAt {
-                    Text("更新于 \(TimeFormatting.timeWithSeconds(updatedAt))")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("本地 CLI 实时驱动")
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(provider == .deepseek ? "余额历史" : "配额历史")
+                        .font(.subheadline.weight(.semibold))
+                    Text("当前 7 天观测周期")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
+
+                Spacer()
+
+                if provider == .deepseek, let bal = snapshot.preferredBalance(currencyPreference: store.preferences.deepSeekCurrencyPreference) {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text(bal.formattedTotal)
+                            .font(.headline.monospacedDigit())
+                        Text("当前余额")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if let tightest = snapshot.mostConstrainedWindow(antigravityGroup: store.preferences.antigravityGroup) {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text("\(tightest.displayPercent(mode: store.preferences.percentMode))%")
+                            .font(.headline.monospacedDigit())
+                        Text("\(store.preferences.percentMode.shortVerb)配额")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
             }
 
-            Spacer()
-
-            Button {
-                Task { await store.refreshAll() }
-            } label: {
-                Label("全部刷新", systemImage: "arrow.triangle.2.circlepath")
-                    .font(.caption.weight(.medium))
+            if points.count >= 2 {
+                CompactHistoryMiniChart(points: points, isBalance: provider == .deepseek)
+                    .frame(height: 92)
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: "chart.xyaxis.line")
+                        .foregroundStyle(CodexPalette.chartAccent)
+                    Text("已开始记录本地采样，点击打开完整历史窗口")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+        }
+        .contentShape(Rectangle())
+        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 
-            Divider().frame(height: 12)
+    // MARK: - Mini Token Activity Section (Codex 30-day buckets)
+
+    private func popoverTokenSection(_ activity: TokenActivitySnapshot) -> some View {
+        let buckets = activity.last30DaysBuckets
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Token 活动")
+                        .font(.subheadline.weight(.semibold))
+                    Text("近 30 天")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if !buckets.isEmpty {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text(CompactTokenFormatter.format(activity.last30DaysTotal))
+                            .font(.headline.monospacedDigit())
+                        Text("总 Token")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            if !buckets.isEmpty {
+                Chart(buckets) { item in
+                    BarMark(
+                        x: .value("日期", item.startDate),
+                        y: .value("Token", item.tokens)
+                    )
+                    .foregroundStyle(CodexPalette.chartAccentBright.gradient)
+                    .cornerRadius(2)
+                }
+                .chartXAxis(.hidden)
+                .chartYAxis(.hidden)
+                .frame(height: 88)
+            } else if let lifetime = activity.lifetimeTokens {
+                HStack(spacing: 8) {
+                    Image(systemName: "chart.bar.fill")
+                        .foregroundStyle(CodexPalette.chartAccent)
+                    Text("累计消耗 \(CompactTokenFormatter.format(lifetime)) Tokens")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+            }
+        }
+        .contentShape(Rectangle())
+        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Bottom Settings & Footer (CodexMeter exact layout)
+
+    private var bottomSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
 
             Button {
                 onOpenSettings()
             } label: {
-                Label("设置", systemImage: "slider.horizontal.3")
-                    .font(.caption.weight(.medium))
+                HStack(spacing: 7) {
+                    Image(systemName: "gearshape")
+                    Text("设置")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.primary)
 
-            Divider().frame(height: 12)
+            Divider()
 
-            Button {
-                NSApplication.shared.terminate(nil)
-            } label: {
-                Text("退出")
-                    .font(.caption.weight(.medium))
+            HStack {
+                if let updatedAt = snapshot.updatedAt {
+                    Text("已更新 \(TimeFormatting.timeWithSeconds(updatedAt))")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                } else {
+                    Text("本地 CLI 连接就绪")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                Spacer()
+
+                Button("退出") {
+                    NSApplication.shared.terminate(nil)
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .liquidGlassCapsule()
-    }
-
-    private struct WindowGroupBucket {
-        let title: String
-        let header: String?
-        let windows: [QuotaWindow]
-    }
-
-    private func groupedQuotaWindows(_ windows: [QuotaWindow]) -> [WindowGroupBucket] {
-        var order: [String] = []
-        var map: [String: [QuotaWindow]] = [:]
-        for win in windows {
-            let key = win.groupName ?? "__default__"
-            if map[key] == nil {
-                order.append(key)
-                map[key] = []
-            }
-            map[key]?.append(win)
-        }
-        let showHeader = order.count > 1 || (order.first != nil && order.first != "__default__")
-        return order.map { key in
-            WindowGroupBucket(
-                title: key,
-                header: (showHeader && key != "__default__") ? key : nil,
-                windows: map[key] ?? []
-            )
         }
     }
 }
 
-private struct QuotaWindowDetailRow: View {
+// MARK: - CodexMeter-style Window Row & MetricBar
+
+private struct CodexStyleWindowRow: View {
     let window: QuotaWindow
     let now: Date
     let percentMode: QuotaPercentMode
-    let accent: Color
+    let lowThreshold: Int
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var displayTitle: String {
+        if let group = window.groupName, !group.isEmpty, !window.title.contains(group) {
+            return "\(group) · \(window.title)"
+        }
+        return window.title
+    }
+
+    private var quotaValue: Double {
+        Double(window.displayPercent(mode: percentMode))
+    }
+
+    private var timeValue: Double? {
+        guard let remTime = window.remainingTimePercent(at: now) else { return nil }
+        return percentMode == .remaining ? remTime : (100.0 - remTime)
+    }
 
     var body: some View {
-        let primaryPct = window.displayPercent(mode: percentMode)
-        let secondaryPct = percentMode == .used ? window.remainingPercent : window.usedPercent
-        let secondaryVerb = percentMode == .used ? "剩余" : "已用"
-
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Text(window.title)
+                Text(displayTitle)
                     .font(.subheadline.weight(.semibold))
 
                 Spacer()
 
-                paceBadge
+                paceIndicator
             }
 
-            HStack(alignment: .lastTextBaseline) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(percentMode.shortVerb)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("\(primaryPct)%")
-                        .font(.system(size: 21, weight: .bold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(barTint)
-                }
-
-                Spacer()
-
-                Text("\(secondaryVerb) \(secondaryPct)%")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-
-            LiquidProgressTrack(
-                label: percentMode == .used ? "已消耗配额" : "剩余可用配额",
-                percent: Double(primaryPct),
-                tint: barTint
+            CodexMetricBar(
+                label: percentMode == .remaining ? "剩余配额" : "已用配额",
+                value: quotaValue,
+                tint: CodexPalette.quotaSwiftUIColor(
+                    for: window.attentionLevel(at: now, criticalBelow: lowThreshold),
+                    colorScheme: colorScheme
+                ),
+                symbol: "battery.75percent"
             )
 
-            if let timePct = (percentMode == .used ? window.elapsedTimePercent(at: now) : window.remainingTimePercent(at: now)) {
-                LiquidProgressTrack(
-                    label: percentMode == .used ? "周期已过时间" : "周期剩余时间",
-                    percent: timePct,
-                    tint: .cyan.opacity(0.85)
-                )
-            }
+            CodexMetricBar(
+                label: percentMode == .remaining ? "剩余时间" : "已过时间",
+                value: timeValue,
+                tint: CodexPalette.timeSwiftUIColor(for: colorScheme),
+                symbol: "clock"
+            )
 
             HStack {
                 if let resetsAt = window.resetsAt {
                     Label(TimeFormatting.detailedCountdown(until: resetsAt, from: now), systemImage: "hourglass")
-                    Spacer()
-                    Text("重置于 \(TimeFormatting.fullDateTime(resetsAt))")
-                        .monospacedDigit()
                 } else if let raw = window.resetRawText {
-                    Label("重置：\(raw)", systemImage: "clock")
-                    Spacer()
+                    Label("重置：\(raw)", systemImage: "hourglass")
                 } else {
-                    Label("重置时间未知", systemImage: "clock")
-                    Spacer()
+                    Label("重置时间不可用", systemImage: "hourglass")
+                }
+
+                Spacer()
+
+                if let resetsAt = window.resetsAt {
+                    Text("重置：\(TimeFormatting.fullDateTime(resetsAt))")
+                        .monospacedDigit()
                 }
             }
-            .font(.caption2)
+            .font(.caption)
             .foregroundStyle(.secondary)
         }
-    }
-
-    private var barTint: Color {
-        switch window.attentionLevel(at: now) {
-        case .critical:
-            return .red
-        case .warning:
-            return .orange
-        case .normal:
-            return accent
-        }
+        .padding(.vertical, 3)
     }
 
     @ViewBuilder
-    private var paceBadge: some View {
-        if window.remainingPercent <= 20 {
-            Label("额度紧张", systemImage: "bolt.trianglebadge.exclamationmark.fill")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.red)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(.red.opacity(0.14), in: Capsule())
-        } else {
-            switch window.pace(at: now) {
-            case .onTrack:
-                Label("进度健康", systemImage: "checkmark.circle.fill")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.green)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(.green.opacity(0.14), in: Capsule())
-            case .overPace:
-                Label("消耗偏快", systemImage: "flame.fill")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(.orange.opacity(0.14), in: Capsule())
-            case .unavailable:
-                EmptyView()
-            }
+    private var paceIndicator: some View {
+        switch window.pace(at: now) {
+        case .onTrack:
+            Label("进度正常", systemImage: "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.green)
+        case .overPace:
+            Label("超出进度", systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        case .unavailable:
+            Label("未知进度", systemImage: "questionmark.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }
 
-private struct LiquidProgressTrack: View {
+private struct CodexMetricBar: View {
     let label: String
-    let percent: Double
+    let value: Double?
     let tint: Color
+    let symbol: String
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(spacing: 5) {
             HStack {
-                Text(label)
+                Label(label, systemImage: symbol)
                 Spacer()
-                Text("\(Int(percent.rounded()))%")
+                Text(value.map { "\(Int($0.rounded()))%" } ?? "—")
                     .monospacedDigit()
             }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
+            .font(.caption)
 
-            GeometryReader { geo in
-                let clamped = min(1.0, max(0.0, percent / 100.0))
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(.primary.opacity(0.10))
-                    if clamped > 0.005 {
-                        Capsule()
-                            .fill(
-                                LinearGradient(
-                                    colors: [tint.opacity(0.85), tint],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .frame(width: max(6, geo.size.width * clamped))
-                    }
-                }
-            }
-            .frame(height: 6.5)
+            ProgressView(value: value ?? 0, total: 100)
+                .tint(tint)
+                .id(colorScheme)
+                .opacity(value == nil ? 0.25 : 1)
         }
+    }
+}
+
+struct CompactHistoryMiniChart: View {
+    let points: [QuotaHistoryPoint]
+    let isBalance: Bool
+
+    var body: some View {
+        Chart {
+            ForEach(points) { pt in
+                let yVal = isBalance ? (pt.balanceAmount ?? 0) : Double(pt.remainingPercent)
+                AreaMark(
+                    x: .value("时间", pt.timestamp),
+                    y: .value("数值", yVal)
+                )
+                .interpolationMethod(.monotone)
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [CodexPalette.chartAccent.opacity(0.24), .clear],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+
+                LineMark(
+                    x: .value("时间", pt.timestamp),
+                    y: .value("数值", yVal)
+                )
+                .interpolationMethod(.monotone)
+                .foregroundStyle(CodexPalette.chartAccentBright)
+                .lineStyle(StrokeStyle(lineWidth: 1.4))
+            }
+
+            if let latest = points.last {
+                let yVal = isBalance ? (latest.balanceAmount ?? 0) : Double(latest.remainingPercent)
+                PointMark(
+                    x: .value("时间", latest.timestamp),
+                    y: .value("数值", yVal)
+                )
+                .foregroundStyle(CodexPalette.chartAccentBright)
+                .symbolSize(28)
+            }
+        }
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
     }
 }

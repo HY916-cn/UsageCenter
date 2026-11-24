@@ -2,87 +2,68 @@ import AppKit
 import SwiftUI
 import UsageCenterCore
 
-struct LiquidBackdrop: View {
-    let accent: Color
+enum CodexPalette {
+    static let timeBlueNS = NSColor(srgbRed: 0.30, green: 0.72, blue: 1.0, alpha: 1.0)
+    static let warningYellowNS = NSColor.systemYellow
+    static let criticalRedNS = NSColor.systemRed
+
+    static let chartAccent = Color(red: 0.22, green: 0.72, blue: 0.79)
+    static let chartAccentBright = Color(red: 0.33, green: 0.82, blue: 0.88)
+
+    static func quotaSwiftUIColor(for level: QuotaAttentionLevel, colorScheme: ColorScheme) -> Color {
+        let nsColor: NSColor = switch level {
+        case .normal: .labelColor
+        case .warning: warningYellowNS
+        case .critical: criticalRedNS
+        }
+        return resolvedColor(nsColor, for: colorScheme)
+    }
+
+    static func timeSwiftUIColor(for colorScheme: ColorScheme) -> Color {
+        resolvedColor(timeBlueNS, for: colorScheme)
+    }
+
+    private static func resolvedColor(_ nsColor: NSColor, for scheme: ColorScheme) -> Color {
+        let name: NSAppearance.Name = scheme == .dark ? .darkAqua : .aqua
+        guard let appearance = NSAppearance(named: name) else {
+            return Color(nsColor: nsColor)
+        }
+        var resolved = nsColor
+        appearance.performAsCurrentDrawingAppearance {
+            resolved = nsColor.usingColorSpace(.sRGB) ?? nsColor
+        }
+        return Color(nsColor: resolved)
+    }
+}
+
+struct HistoryBackdrop: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ZStack {
-            (colorScheme == .dark
-                ? Color(red: 0.055, green: 0.060, blue: 0.075)
-                : Color(nsColor: .windowBackgroundColor))
-
+            (colorScheme == .dark ? Color.black : Color(nsColor: .windowBackgroundColor))
             RadialGradient(
-                colors: [
-                    accent.opacity(colorScheme == .dark ? 0.22 : 0.13),
-                    accent.opacity(colorScheme == .dark ? 0.05 : 0.03),
-                    .clear
-                ],
+                colors: [CodexPalette.chartAccent.opacity(colorScheme == .dark ? 0.16 : 0.10), .clear],
                 center: .topLeading,
-                startRadius: 8,
-                endRadius: 460
-            )
-
-            RadialGradient(
-                colors: [
-                    Color.cyan.opacity(colorScheme == .dark ? 0.10 : 0.06),
-                    .clear
-                ],
-                center: .bottomTrailing,
-                startRadius: 12,
-                endRadius: 380
+                startRadius: 10,
+                endRadius: 620
             )
         }
         .ignoresSafeArea()
     }
 }
 
-struct LiquidGlassStage<Content: View>: View {
-    var spacing: CGFloat = 14
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        if #available(macOS 26.0, *) {
-            GlassEffectContainer(spacing: spacing) {
-                content()
-            }
-        } else {
-            content()
-        }
-    }
-}
-
 extension View {
     @ViewBuilder
-    func liquidGlassCard(cornerRadius: CGFloat = 18, interactive: Bool = false) -> some View {
+    func liquidHistoryCard(cornerRadius: CGFloat = 22) -> some View {
         if #available(macOS 26.0, *) {
-            self.glassEffect(
-                interactive ? .regular.interactive() : .regular,
-                in: .rect(cornerRadius: cornerRadius)
-            )
+            self.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
         } else {
             self
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius))
                 .overlay {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .strokeBorder(.primary.opacity(0.10), lineWidth: 0.8)
-                }
-        }
-    }
-
-    @ViewBuilder
-    func liquidGlassCapsule(interactive: Bool = false) -> some View {
-        if #available(macOS 26.0, *) {
-            self.glassEffect(
-                interactive ? .regular.interactive() : .regular,
-                in: .capsule
-            )
-        } else {
-            self
-                .background(.ultraThinMaterial, in: Capsule())
-                .overlay {
-                    Capsule()
-                        .strokeBorder(.primary.opacity(0.10), lineWidth: 0.8)
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .strokeBorder(.white.opacity(0.10), lineWidth: 1)
                 }
         }
     }
@@ -142,49 +123,6 @@ struct WindowAppearanceBridge: NSViewRepresentable {
             case .dark:
                 window?.appearance = NSAppearance(named: .darkAqua)
             }
-        }
-    }
-}
-
-struct ModernWindowChromeConfigurator: NSViewRepresentable {
-    let title: String
-
-    func makeNSView(context: Context) -> ChromeView {
-        ChromeView(title: title)
-    }
-
-    func updateNSView(_ nsView: ChromeView, context: Context) {
-        nsView.configure(title: title)
-    }
-
-    final class ChromeView: NSView {
-        private var titleText: String
-
-        init(title: String) {
-            self.titleText = title
-            super.init(frame: .zero)
-        }
-
-        @available(*, unavailable)
-        required init?(coder: NSCoder) {
-            fatalError("init(coder:) has not been implemented")
-        }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            apply()
-        }
-
-        func configure(title: String) {
-            self.titleText = title
-            apply()
-        }
-
-        private func apply() {
-            guard let window else { return }
-            window.title = titleText
-            window.titlebarAppearsTransparent = true
-            window.styleMask.insert([.fullSizeContentView, .resizable])
         }
     }
 }

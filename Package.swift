@@ -19,7 +19,10 @@ let package = Package(
         .executableTarget(
             name: "UsageCenter",
             dependencies: ["UsageCenterCore"],
-            path: "Sources/UsageCenter"
+            path: "Sources/UsageCenter",
+            resources: [
+                .copy("Resources/Icons")
+            ]
         ),
         .testTarget(
             name: "UsageCenterCoreTests",
