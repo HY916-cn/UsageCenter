@@ -181,6 +181,8 @@ public enum HistoryAnalytics {
             .sorted { $0.timestamp < $1.timestamp }
 
         // Ensure current live state is always represented so inline history charts render immediately
+        let liveBalanceUUID = UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!
+        let liveQuotaUUID = UUID(uuidString: "00000000-0000-0000-0000-0000000000A1")!
         if mode != .browse {
             if isBalance, let bal = liveBalance {
                 let shouldAppend = inRange.last.map {
@@ -188,6 +190,7 @@ public enum HistoryAnalytics {
                 } ?? true
                 if shouldAppend {
                     inRange.append(QuotaHistoryPoint(
+                        id: liveBalanceUUID,
                         provider: .deepseek,
                         windowID: "deepseek-live",
                         windowTitle: "当前余额",
@@ -203,6 +206,7 @@ public enum HistoryAnalytics {
                     } ?? true
                     if shouldAppend {
                         inRange.append(QuotaHistoryPoint(
+                            id: liveQuotaUUID,
                             provider: .chatgpt,
                             windowID: win.id,
                             windowTitle: win.title,

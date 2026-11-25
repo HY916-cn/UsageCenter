@@ -458,6 +458,10 @@ struct ProviderDetailPopoverView: View {
                             }
                         }
                         .frame(height: 118)
+                        .clipped()
+                        .transaction { transaction in
+                            transaction.animation = nil
+                        }
 
                         HStack(spacing: 12) {
                             ChartLegendItem(
@@ -648,6 +652,10 @@ struct ProviderDetailPopoverView: View {
                 .chartXAxis(.hidden)
                 .chartYAxis(.hidden)
                 .frame(height: 82)
+                .clipped()
+                .transaction { transaction in
+                    transaction.animation = nil
+                }
             }
         }
         .contentShape(Rectangle())

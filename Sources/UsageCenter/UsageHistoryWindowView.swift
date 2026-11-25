@@ -411,6 +411,10 @@ struct UsageHistoryWindowView: View {
             ? 0...(max(10, (series.points.map(\.value).max() ?? 50) * 1.15))
             : 0...100
         )
+        .clipped()
+        .transaction { transaction in
+            transaction.animation = nil
+        }
         .chartOverlay { proxy in
             GeometryReader { geo in
                 Rectangle()
@@ -552,6 +556,10 @@ struct UsageHistoryWindowView: View {
                     }
                 }
                 .chartXScale(domain: domain)
+                .clipped()
+                .transaction { transaction in
+                    transaction.animation = nil
+                }
                 .chartYAxis {
                     AxisMarks(position: .leading) { val in
                         AxisGridLine().foregroundStyle(Color.white.opacity(0.12))
@@ -684,9 +692,7 @@ struct UsageHistoryWindowView: View {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 let isSel = (item.1 == selected)
                 Button {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        onSelect(item.1)
-                    }
+                    onSelect(item.1)
                 } label: {
                     Text(item.0)
                         .font(.caption.weight(isSel ? .semibold : .regular))
@@ -705,6 +711,7 @@ struct UsageHistoryWindowView: View {
         }
         .padding(3)
         .background(Color.white.opacity(0.08), in: Capsule())
+        .animation(.easeOut(duration: 0.14), value: selected)
     }
 
     private var rangeSubtitle: String {
@@ -727,9 +734,7 @@ struct UsageHistoryWindowView: View {
             ForEach(options) { opt in
                 let isSel = (opt == selected)
                 Button {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        onSelect(opt)
-                    }
+                    onSelect(opt)
                 } label: {
                     Text(title(opt))
                         .font(.caption.weight(isSel ? .semibold : .regular))
@@ -748,6 +753,7 @@ struct UsageHistoryWindowView: View {
         }
         .padding(4)
         .background(Color.white.opacity(0.08), in: Capsule())
+        .animation(.easeOut(duration: 0.14), value: selected)
     }
 
     private func metricBlock(title: String, value: String, tint: Color) -> some View {
