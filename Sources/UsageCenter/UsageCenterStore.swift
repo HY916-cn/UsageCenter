@@ -6,9 +6,9 @@ import UserNotifications
 import UsageCenterCore
 
 enum SettingsCategory: String, CaseIterable, Identifiable {
-    case general
     case menuAndPopover
     case cliAndAccounts
+    case general
     case notifications
     case history
     case developer
@@ -18,21 +18,21 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .general: return "通用"
         case .menuAndPopover: return "菜单栏与弹窗"
         case .cliAndAccounts: return "CLI 与账户"
-        case .notifications: return "通知提醒"
+        case .general: return "通用"
+        case .notifications: return "通知"
         case .history: return "历史与存储"
-        case .developer: return "开发者选项"
+        case .developer: return "开发者"
         case .about: return "关于"
         }
     }
 
     var symbol: String {
         switch self {
-        case .general: return "gearshape"
         case .menuAndPopover: return "menubar.rectangle"
         case .cliAndAccounts: return "terminal"
+        case .general: return "gearshape"
         case .notifications: return "bell"
         case .history: return "externaldrive"
         case .developer: return "hammer"
@@ -43,7 +43,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
 
 @MainActor
 final class UsageCenterStore: ObservableObject {
-    private static let preferencesKey = "UsageCenter.preferences.v2"
+    private static let preferencesKey = "UsageCenter.preferences.v3"
     private let historyStore = UsageHistoryStore()
 
     @Published var preferences: UsageCenterPreferences {
@@ -62,13 +62,21 @@ final class UsageCenterStore: ObservableObject {
 
     @Published private(set) var snapshots: [ProviderID: ProviderSnapshot] = [:]
     @Published var activeProvider: ProviderID = .claude
-    @Published var selectedSettingsCategory: SettingsCategory? = .menuAndPopover
+    @Published var selectedSettingsCategory: SettingsCategory = .menuAndPopover
+
+    // Detailed History Window State (CodexMeter parity)
     @Published var historyProvider: ProviderID = .chatgpt
     @Published var historyWindowID: String?
-    @Published var historyRange: HistoryTimeRange = .currentCycle
+    @Published var historyMode: HistoryQueryMode = .currentCycle
+    @Published var historyCalendarUnit: HistoryCalendarUnit = .week
+    @Published var historyCalendarOffset: Int = 0
+    @Published var tokenRange: TokenHistoryRange = .days30
+    @Published var hoveredQuotaPointID: String?
+    @Published var hoveredTokenDate: Date?
     @Published var showsClearHistoryAlert: Bool = false
 
     @Published private(set) var historySamples: [QuotaHistoryPoint] = []
+    @Published private(set) var persistedTokenActivity: TokenActivitySnapshot?
     @Published private(set) var historyStorageBytes: Int64 = 0
     @Published var deepSeekAPIKeyInput: String = ""
     @Published private(set) var hasStoredDeepSeekKey: Bool = false
@@ -120,6 +128,10 @@ final class UsageCenterStore: ObservableObject {
         snapshots[provider] ?? ProviderSnapshot(provider: provider)
     }
 
+    func effectiveTokenActivity() -> TokenActivitySnapshot? {
+        snapshots[.chatgpt]?.tokenActivity ?? persistedTokenActivity
+    }
+
     func isRefreshing(_ provider: ProviderID) -> Bool {
         inFlightProviders.contains(provider)
     }
@@ -132,8 +144,7 @@ final class UsageCenterStore: ObservableObject {
 
     func detectedCLIPath(for provider: ProviderID) -> String? {
         if provider == .deepseek, DSHCredentialReader.readDefaultGrant() != nil {
-            let path = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".dsh/.credentials.yaml").path
-            return path
+            return "~/.dsh/.credentials.yaml"
         }
         let custom = preferences.config(for: provider).customCLIPath
         return ExecutableLocator.locate(
@@ -149,7 +160,7 @@ final class UsageCenterStore: ObservableObject {
     func saveDeepSeekKey() {
         let ok = KeychainHelper.saveDeepSeekAPIKey(deepSeekAPIKeyInput)
         hasStoredDeepSeekKey = !deepSeekAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && ok
-        statusBannerMessage = ok ? "已保存备用 DeepSeek API Key 至系统钥匙串" : "钥匙串写入失败"
+        statusBannerMessage = ok ? "已保存备用 API Key" : "钥匙串保存失败"
         Task { await refresh(provider: .deepseek) }
     }
 
@@ -197,8 +208,7 @@ final class UsageCenterStore: ObservableObject {
                 preferences: currentPrefs,
                 deepSeekKeyOverride: keyOverride
             )
-            // Preserve previous tokenActivity if the latest refresh omitted it
-            if fresh.tokenActivity == nil, let oldTokens = previous.tokenActivity {
+            if fresh.tokenActivity == nil, let oldTokens = previous.tokenActivity ?? persistedTokenActivity {
                 fresh.tokenActivity = oldTokens
             }
             snapshots[provider] = fresh
@@ -216,22 +226,32 @@ final class UsageCenterStore: ObservableObject {
         }
     }
 
-    // MARK: - History Helpers
+    // MARK: - History Queries
 
     func reloadHistoryMetadata() {
         historySamples = historyStore.allSamples()
+        persistedTokenActivity = historyStore.storedTokenActivity()
         historyStorageBytes = historyStore.storageSizeBytes()
     }
 
-    func historyPoints(for provider: ProviderID, windowID: String?, range: HistoryTimeRange) -> [QuotaHistoryPoint] {
-        let cutoff = Date().addingTimeInterval(-range.lookbackSeconds)
-        let providerSamples = historySamples.filter { $0.provider == provider && $0.timestamp >= cutoff }
+    func windowSamples(for provider: ProviderID, windowID: String?) -> [QuotaHistoryPoint] {
+        let providerAll = historySamples.filter { $0.provider == provider }
         if provider == .deepseek {
-            return providerSamples
+            return providerAll
         }
-        let resolvedID = windowID ?? defaultHistoryWindowID(for: provider)
-        guard let resolvedID else { return providerSamples }
-        return providerSamples.filter { $0.windowID == resolvedID }
+        let targetID = windowID ?? defaultHistoryWindowID(for: provider)
+        guard let targetID else { return providerAll }
+        return providerAll.filter { $0.windowID == targetID }
+    }
+
+    func activeWindowObject(for provider: ProviderID, windowID: String?) -> QuotaWindow? {
+        let snap = snapshot(for: provider)
+        let targetID = windowID ?? defaultHistoryWindowID(for: provider)
+        if let targetID, let found = snap.windows.first(where: { $0.id == targetID }) {
+            return found
+        }
+        let pair = snap.resolvedWindows(antigravityGroup: preferences.antigravityGroup)
+        return pair.weekly ?? pair.fiveHour ?? snap.windows.first
     }
 
     func defaultHistoryWindowID(for provider: ProviderID) -> String? {
@@ -256,8 +276,7 @@ final class UsageCenterStore: ObservableObject {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "UsageCenter-History.csv"
         if panel.runModal() == .OK, let url = panel.url {
-            let data = historyStore.exportCSV()
-            try? data.write(to: url, options: .atomic)
+            try? historyStore.exportCSV().write(to: url, options: .atomic)
         }
     }
 
@@ -273,7 +292,7 @@ final class UsageCenterStore: ObservableObject {
                 guard let self else { return }
                 self.preferences.notificationsEnabled = granted
                 if !granted {
-                    self.statusBannerMessage = "系统未授予通知权限，请在系统设置 → 通知中允许 UsageCenter"
+                    self.statusBannerMessage = "未授予通知权限，请在系统设置 → 通知中开启"
                 }
             }
         }
@@ -291,17 +310,14 @@ final class UsageCenterStore: ObservableObject {
                 let content = UNMutableNotificationContent()
                 content.title = "\(snap.provider.displayName) · \(win.title)"
                 content.body = low
-                    ? "剩余配额仅 \(win.remainingPercent)%（低于阈值 \(preferences.lowQuotaThreshold)%）"
-                    : "当前消耗速度超出时间进度（剩余配额 \(win.remainingPercent)%）"
-                let req = UNNotificationRequest(identifier: key, content: content, trigger: nil)
-                UNUserNotificationCenter.current().add(req)
+                    ? "剩余配额 \(win.remainingPercent)%"
+                    : "消耗速度超出时间进度（剩余 \(win.remainingPercent)%）"
+                UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: key, content: content, trigger: nil))
             } else {
                 alertedWindowKeys.remove(key)
             }
         }
     }
-
-    // MARK: - Login & Persistence
 
     func refreshLaunchAtLoginStatus() {
         launchAtLoginEnabled = (SMAppService.mainApp.status == .enabled)
@@ -316,7 +332,7 @@ final class UsageCenterStore: ObservableObject {
             }
             refreshLaunchAtLoginStatus()
         } catch {
-            statusBannerMessage = "开机自启需从 /Applications/UsageCenter.app 启动设置"
+            statusBannerMessage = "请从 /Applications/UsageCenter.app 开启登录自启"
             refreshLaunchAtLoginStatus()
         }
     }

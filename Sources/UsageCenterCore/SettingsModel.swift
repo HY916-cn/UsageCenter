@@ -12,12 +12,12 @@ public enum SegmentDisplayStyle: String, CaseIterable, Codable, Identifiable, Se
 
     public var localizedName: String {
         switch self {
-        case .rings: return "同心双环 + 百分比（CodexMeter 默认）"
-        case .horizontalBar: return "横向进度条 + 百分比"
-        case .dualBars: return "双进度条（配额+时间）+ 百分比"
-        case .compactBar: return "百分比 + 底部紧凑条"
-        case .statsMini: return "双层纯文字（Stats Mini 风格）"
-        case .progressOnly: return "仅图标与同心双环"
+        case .rings: return "双环 + 百分比"
+        case .horizontalBar: return "单条 + 百分比"
+        case .dualBars: return "双条 + 百分比"
+        case .compactBar: return "百分比 + 底条"
+        case .statsMini: return "纯数字"
+        case .progressOnly: return "仅图标与双环"
         }
     }
 }
@@ -30,8 +30,8 @@ public enum QuotaPercentMode: String, CaseIterable, Codable, Identifiable, Senda
 
     public var localizedName: String {
         switch self {
-        case .remaining: return "剩余配额 (Remaining%)"
-        case .used: return "已用配额 (Used%)"
+        case .remaining: return "剩余配额"
+        case .used: return "已用配额"
         }
     }
 
@@ -44,17 +44,17 @@ public enum QuotaPercentMode: String, CaseIterable, Codable, Identifiable, Senda
 }
 
 public enum TimeDisplayMode: String, CaseIterable, Codable, Identifiable, Sendable {
+    case hidden
     case countdown
     case clock
-    case hidden
 
     public var id: String { rawValue }
 
     public var localizedName: String {
         switch self {
-        case .countdown: return "窗口 + 剩余时间 (如 5h·4h)"
-        case .clock: return "窗口 + 重置时间 (如 5h·04:30)"
-        case .hidden: return "仅显示窗口名 (5h / 周)"
+        case .hidden: return "窗口简称 (5h / 7d)"
+        case .countdown: return "剩余时间 (如 4h / 6d)"
+        case .clock: return "重置时刻 (如 04:30)"
         }
     }
 }
@@ -69,10 +69,10 @@ public enum WindowVisibilityMode: String, CaseIterable, Codable, Identifiable, S
 
     public var localizedName: String {
         switch self {
-        case .both: return "同时显示 5小时 与 周配额"
-        case .mostConstrained: return "自动（显示剩余最少窗口）"
-        case .fiveHourOnly: return "仅 5小时配额"
-        case .weeklyOnly: return "仅 周配额"
+        case .both: return "5h + 周"
+        case .mostConstrained: return "自动最低"
+        case .fiveHourOnly: return "仅 5h"
+        case .weeklyOnly: return "仅 周"
         }
     }
 }
@@ -86,39 +86,9 @@ public enum AntigravityGroupPreference: String, CaseIterable, Codable, Identifia
 
     public var localizedName: String {
         switch self {
-        case .auto: return "自动（剩余最少模型组）"
-        case .gemini: return "Gemini 模型组"
-        case .thirdParty: return "Claude & GPT 模型组"
-        }
-    }
-}
-
-public enum IconColorMode: String, CaseIterable, Codable, Identifiable, Sendable {
-    case brand
-    case monochrome
-
-    public var id: String { rawValue }
-
-    public var localizedName: String {
-        switch self {
-        case .brand: return "彩色官方 SVG 图标"
-        case .monochrome: return "单色自适应状态栏图标"
-        }
-    }
-}
-
-public enum AppAppearancePreference: String, CaseIterable, Codable, Identifiable, Sendable {
-    case system
-    case light
-    case dark
-
-    public var id: String { rawValue }
-
-    public var localizedName: String {
-        switch self {
-        case .system: return "跟随系统"
-        case .light: return "浅色"
-        case .dark: return "深色"
+        case .auto: return "自动（最低剩余组）"
+        case .gemini: return "Gemini 模型"
+        case .thirdParty: return "Claude & GPT"
         }
     }
 }
@@ -134,11 +104,11 @@ public enum HistoryRetentionPolicy: Int, CaseIterable, Codable, Identifiable, Se
 
     public var localizedName: String {
         switch self {
-        case .days7: return "保留 7 天"
-        case .days30: return "保留 30 天"
-        case .days90: return "保留 90 天"
-        case .days365: return "保留 1 年"
-        case .unlimited: return "永久保留"
+        case .days7: return "7 天"
+        case .days30: return "30 天"
+        case .days90: return "90 天"
+        case .days365: return "1 年"
+        case .unlimited: return "永久"
         }
     }
 }
@@ -152,9 +122,9 @@ public enum PopoverSectionKind: String, CaseIterable, Codable, Identifiable, Sen
 
     public var localizedName: String {
         switch self {
-        case .quotaDetails: return "配额与余额详情"
-        case .quotaHistory: return "周期历史趋势图"
-        case .tokenActivity: return "近 30 天 Token 活动"
+        case .quotaDetails: return "配额与余额"
+        case .quotaHistory: return "周期趋势图"
+        case .tokenActivity: return "Token 活动"
         }
     }
 }
@@ -166,7 +136,6 @@ public struct ProviderSectionConfig: Codable, Equatable, Identifiable, Sendable 
     public var styleOverride: SegmentDisplayStyle?
     public var windowVisibility: WindowVisibilityMode
     public var showsResetTimeInMenuBar: Bool
-    public var showsProviderLabel: Bool
     public var customCLIPath: String
 
     public init(
@@ -175,7 +144,6 @@ public struct ProviderSectionConfig: Codable, Equatable, Identifiable, Sendable 
         styleOverride: SegmentDisplayStyle? = nil,
         windowVisibility: WindowVisibilityMode = .both,
         showsResetTimeInMenuBar: Bool = true,
-        showsProviderLabel: Bool = false,
         customCLIPath: String = ""
     ) {
         self.provider = provider
@@ -183,7 +151,6 @@ public struct ProviderSectionConfig: Codable, Equatable, Identifiable, Sendable 
         self.styleOverride = styleOverride
         self.windowVisibility = windowVisibility
         self.showsResetTimeInMenuBar = showsResetTimeInMenuBar
-        self.showsProviderLabel = showsProviderLabel
         self.customCLIPath = customCLIPath
     }
 }
@@ -193,16 +160,13 @@ public struct UsageCenterPreferences: Codable, Equatable, Sendable {
     public var globalStyle: SegmentDisplayStyle
     public var percentMode: QuotaPercentMode
     public var timeDisplayMode: TimeDisplayMode
-    public var iconColorMode: IconColorMode
     public var showsDividers: Bool
     public var monospacedDigits: Bool
     public var antigravityGroup: AntigravityGroupPreference
     public var deepSeekCurrencyPreference: String
     public var deepSeekCustomCommand: String
     public var refreshIntervalSeconds: Int
-    public var appearance: AppAppearancePreference
 
-    // Popover & History & Notifications (CodexMeter parity)
     public var popoverSections: [PopoverSectionKind]
     public var hiddenPopoverSections: Set<PopoverSectionKind>
     public var historyRetention: HistoryRetentionPolicy
@@ -217,15 +181,13 @@ public struct UsageCenterPreferences: Codable, Equatable, Sendable {
         sections: [ProviderSectionConfig] = ProviderID.allCases.map { ProviderSectionConfig(provider: $0) },
         globalStyle: SegmentDisplayStyle = .rings,
         percentMode: QuotaPercentMode = .remaining,
-        timeDisplayMode: TimeDisplayMode = .countdown,
-        iconColorMode: IconColorMode = .brand,
+        timeDisplayMode: TimeDisplayMode = .hidden,
         showsDividers: Bool = true,
         monospacedDigits: Bool = true,
         antigravityGroup: AntigravityGroupPreference = .auto,
         deepSeekCurrencyPreference: String = "AUTO",
         deepSeekCustomCommand: String = "",
         refreshIntervalSeconds: Int = 60,
-        appearance: AppAppearancePreference = .system,
         popoverSections: [PopoverSectionKind] = PopoverSectionKind.allCases,
         hiddenPopoverSections: Set<PopoverSectionKind> = [],
         historyRetention: HistoryRetentionPolicy = .days90,
@@ -240,14 +202,12 @@ public struct UsageCenterPreferences: Codable, Equatable, Sendable {
         self.globalStyle = globalStyle
         self.percentMode = percentMode
         self.timeDisplayMode = timeDisplayMode
-        self.iconColorMode = iconColorMode
         self.showsDividers = showsDividers
         self.monospacedDigits = monospacedDigits
         self.antigravityGroup = antigravityGroup
         self.deepSeekCurrencyPreference = deepSeekCurrencyPreference
         self.deepSeekCustomCommand = deepSeekCustomCommand
         self.refreshIntervalSeconds = refreshIntervalSeconds
-        self.appearance = appearance
         self.popoverSections = Self.normalizedPopoverSections(popoverSections)
         self.hiddenPopoverSections = hiddenPopoverSections
         self.historyRetention = historyRetention

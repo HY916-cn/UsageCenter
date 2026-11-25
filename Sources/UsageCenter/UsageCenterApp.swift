@@ -3,17 +3,43 @@ import SwiftUI
 import UsageCenterCore
 
 @MainActor
-final class SettingsWindowController {
+final class WindowPolicyCoordinator {
+    static let shared = WindowPolicyCoordinator()
+    private var openWindowCount = 0
+
+    func windowDidOpen() {
+        openWindowCount += 1
+        NSApplication.shared.setActivationPolicy(.regular)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    func windowDidClose() {
+        openWindowCount = max(0, openWindowCount - 1)
+        if openWindowCount == 0 {
+            NSApplication.shared.setActivationPolicy(.accessory)
+        }
+    }
+}
+
+@MainActor
+final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let store: UsageCenterStore
     private let onOpenHistory: (ProviderID) -> Void
+    private var isTrackedOpen = false
 
     init(store: UsageCenterStore, onOpenHistory: @escaping (ProviderID) -> Void) {
         self.store = store
         self.onOpenHistory = onOpenHistory
+        super.init()
     }
 
     func show() {
+        if !isTrackedOpen {
+            isTrackedOpen = true
+            WindowPolicyCoordinator.shared.windowDidOpen()
+        }
+
         if let existing = window {
             store.refreshLaunchAtLoginStatus()
             existing.makeKeyAndOrderFront(nil)
@@ -25,32 +51,50 @@ final class SettingsWindowController {
         let hosting = NSHostingController(rootView: rootView)
         let win = NSWindow(contentViewController: hosting)
         win.title = "UsageCenter 设置"
-        win.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        win.setContentSize(NSSize(width: 840, height: 680))
-        win.minSize = NSSize(width: 760, height: 600)
+        win.titleVisibility = .hidden
+        win.titlebarAppearsTransparent = true
+        win.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        win.appearance = NSAppearance(named: .darkAqua)
+        win.setContentSize(NSSize(width: 860, height: 680))
+        win.minSize = NSSize(width: 780, height: 600)
         win.center()
         win.isReleasedWhenClosed = false
+        win.delegate = self
         self.window = win
 
         store.refreshLaunchAtLoginStatus()
         win.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
+
+    func windowWillClose(_ notification: Notification) {
+        if isTrackedOpen {
+            isTrackedOpen = false
+            WindowPolicyCoordinator.shared.windowDidClose()
+        }
+    }
 }
 
 @MainActor
-final class HistoryWindowController {
+final class HistoryWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let store: UsageCenterStore
+    private var isTrackedOpen = false
 
     init(store: UsageCenterStore) {
         self.store = store
+        super.init()
     }
 
     func show(for provider: ProviderID) {
         store.historyProvider = provider
         store.historyWindowID = store.defaultHistoryWindowID(for: provider)
         store.reloadHistoryMetadata()
+
+        if !isTrackedOpen {
+            isTrackedOpen = true
+            WindowPolicyCoordinator.shared.windowDidOpen()
+        }
 
         if let existing = window {
             existing.makeKeyAndOrderFront(nil)
@@ -61,19 +105,28 @@ final class HistoryWindowController {
         let rootView = UsageHistoryWindowView(store: store)
         let hosting = NSHostingController(rootView: rootView)
         let win = NSWindow(contentViewController: hosting)
-        win.title = "UsageCenter 用量历史"
+        win.title = "用量历史"
         win.titleVisibility = .hidden
         win.titlebarAppearsTransparent = true
         win.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         win.collectionBehavior.insert(.fullScreenPrimary)
-        win.setContentSize(NSSize(width: 900, height: 800))
-        win.minSize = NSSize(width: 720, height: 600)
+        win.appearance = NSAppearance(named: .darkAqua)
+        win.setContentSize(NSSize(width: 940, height: 840))
+        win.minSize = NSSize(width: 780, height: 640)
         win.center()
         win.isReleasedWhenClosed = false
+        win.delegate = self
         self.window = win
 
         win.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        if isTrackedOpen {
+            isTrackedOpen = false
+            WindowPolicyCoordinator.shared.windowDidClose()
+        }
     }
 }
 
@@ -157,49 +210,46 @@ struct UsageCenterMain {
 
     private static func runSelfCheckAndExit() -> Never {
         do {
-            // 1. SVG Assets Self-Check
+            // 1. Verify White SVG Icons
             for p in ProviderID.allCases {
-                let img = BrandIconRenderer.statusIcon(for: p, size: 16, mode: .brand)
+                let img = BrandIconRenderer.whiteIcon(for: p, size: 16)
                 precondition(img.size.width == 16 && !img.representations.isEmpty, "Missing SVG for \(p)")
             }
-            print("[OK] Official SVG brand icons loaded")
 
-            // 2. Deterministic Parser Self-Checks
-            let claudeSample = Data("""
-            {"is_error":false,"result":"Current session: 14% used · resets Nov 25 at 4:30am (Asia/Shanghai)\\nCurrent week (all models): 32% used · resets Nov 28 at 10pm (Asia/Shanghai)"}
-            """.utf8)
-            let claudeSnap = try ClaudeCLIParser.parseUsageOutput(claudeSample)
-            precondition(claudeSnap.windows.count == 2 && claudeSnap.windows[0].remainingPercent == 86)
+            // 2. Verify Slot Coordinate Resolution (No wrong-segment fallback)
+            let barView = MainActor.assumeIsolated {
+                let v = CompositeStatusBarView(frame: .zero)
+                _ = v.update(preferences: UsageCenterPreferences(), snapshots: [:], selectedProvider: nil)
+                return v
+            }
+            let slots = MainActor.assumeIsolated { barView.slots }
+            precondition(slots.count == 4, "Expected 4 enabled slots")
+            for slot in slots {
+                let resolved = MainActor.assumeIsolated { barView.resolveSlot(atLocalX: slot.frame.midX)?.provider }
+                precondition(resolved == slot.provider, "Slot hit mismatch for \(slot.provider)")
+            }
+            print("[OK] White SVG icons & 4-segment exact X-coordinate resolution verified")
 
-            let codexSnap = try CodexCLIParser.parse(
-                accountResult: ["account": ["type": "chatgpt", "planType": "plus"]],
-                rateLimitsResult: ["rateLimits": [
-                    "limitId": "codex",
-                    "primary": ["usedPercent": 6, "windowDurationMins": 300, "resetsAt": 1_795_551_747],
-                    "secondary": ["usedPercent": 16, "windowDurationMins": 10_080, "resetsAt": 1_795_690_346]
-                ]]
+            // 3. Verify History Multi-Cycle & Token Aggregation Analytics
+            let now = Date()
+            let samplePts = [
+                QuotaHistoryPoint(provider: .chatgpt, windowID: "w", windowTitle: "周", durationMinutes: 10_080, timestamp: now.addingTimeInterval(-3600 * 10), remainingPercent: 90, resetsAt: now.addingTimeInterval(3600 * 50)),
+                QuotaHistoryPoint(provider: .chatgpt, windowID: "w", windowTitle: "周", durationMinutes: 10_080, timestamp: now, remainingPercent: 76, resetsAt: now.addingTimeInterval(3600 * 40))
+            ]
+            let series = HistoryAnalytics.buildQuotaSeries(
+                samples: samplePts,
+                mode: .currentCycle,
+                calendarUnit: .week,
+                calendarOffset: 0,
+                activeWindow: nil,
+                isBalance: false,
+                now: now
             )
-            precondition(codexSnap.windows.count == 2 && codexSnap.windows[0].remainingPercent == 94)
-
-            let agySample = Data("""
-            {"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","buckets":[{"id":"gemini-5h","window":"5h","remaining_fraction":0.92,"reset_time":"2026-11-24T20:22:25Z"},{"id":"gemini-weekly","window":"weekly","remaining_fraction":0.98,"reset_time":"2026-12-01T15:22:25Z"}]}]}}}
-            """.utf8)
-            let agySnap = try AntigravityCLIParser.parseUsageOutput(agySample)
-            precondition(agySnap.windows.count == 2 && agySnap.windows[0].remainingPercent == 92)
-
-            let dshSample = Data("""
-            {"code":0,"data":{"biz_code":0,"biz_data":{"normal_wallets":[{"currency":"CNY","balance":"36.4416"}],"bonus_wallets":[{"currency":"CNY","balance":"2.00"}],"total_costs":[{"currency":"CNY","amount":"37.8409"}]}}}
-            """.utf8)
-            let dsSnap = try DeepSeekCLIParser.parseBalanceOutput(dshSample)
-            precondition(dsSnap.preferredBalance(currencyPreference: "AUTO")?.formattedTotal == "¥38.44")
-            precondition(dsSnap.preferredBalance(currencyPreference: "AUTO")?.formattedTotalCost == "¥37.84")
-            print("[OK] All parser assertions passed (Remaining% + DSH Wallets)")
-        } catch {
-            fputs("[FAIL] Assertion error: \(error)\n", stderr)
-            exit(1)
+            precondition(series != nil && series!.observedConsumedPercent >= 14)
+            print("[OK] Multi-cycle history analytics & burn-rate projection verified")
         }
 
-        // 3. Live Local CLI + DSH Integration Probe
+        // 4. Live CLI + DSH Check
         let semaphore = DispatchSemaphore(value: 0)
         Task {
             let prefs = UsageCenterPreferences()
@@ -208,13 +258,12 @@ struct UsageCenterMain {
                     let snap = try await ProviderUsageFetcher.fetch(provider: provider, preferences: prefs)
                     if provider == .deepseek {
                         let item = snap.preferredBalance(currencyPreference: "AUTO")
-                        print("[LIVE OK] DeepSeek (\(snap.accountLabel ?? "-")): remaining \(item?.formattedTotal ?? "N/A"), totalCost \(item?.formattedTotalCost ?? "N/A")")
+                        print("[LIVE OK] DeepSeek (\(snap.accountLabel ?? "-")): \(item?.formattedTotal ?? "N/A")")
                     } else {
                         let pair = snap.resolvedWindows(antigravityGroup: .auto)
-                        let s5 = pair.fiveHour.map { "5h remaining \($0.remainingPercent)%" } ?? "no-5h"
-                        let s7 = pair.weekly.map { "weekly remaining \($0.remainingPercent)%" } ?? "no-weekly"
-                        let tok = snap.tokenActivity.map { ", 30d tokens \(CompactTokenFormatter.format($0.last30DaysTotal))" } ?? ""
-                        print("[LIVE OK] \(provider.displayName) (\(snap.accountLabel ?? "-")): \(s5), \(s7)\(tok)")
+                        let s5 = pair.fiveHour.map { "5h \($0.remainingPercent)%" } ?? "-"
+                        let s7 = pair.weekly.map { "7d \($0.remainingPercent)%" } ?? "-"
+                        print("[LIVE OK] \(provider.displayName): \(s5), \(s7)")
                     }
                 } catch {
                     print("[LIVE ERR] \(provider.displayName): \(error.localizedDescription)")

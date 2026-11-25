@@ -6,11 +6,8 @@ public enum BrandIconRenderer {
     private static var baseSVGCache: [ProviderID: NSImage] = [:]
     private static let cacheLock = NSLock()
 
-    public static func statusIcon(
-        for provider: ProviderID,
-        size: CGFloat = 15,
-        mode: IconColorMode = .brand
-    ) -> NSImage {
+    /// Renders pure white (#FFFFFF) official SVG vector mark at crisp Retina resolution.
+    public static func whiteIcon(for provider: ProviderID, size: CGFloat = 15) -> NSImage {
         guard let source = loadSVGImage(for: provider) else {
             return NSImage(size: NSSize(width: size, height: size))
         }
@@ -24,9 +21,12 @@ public enum BrandIconRenderer {
                 operation: .sourceOver,
                 fraction: 1.0
             )
+            // Enforce crisp pure white tint across all pixels regardless of SVG parser defaults
+            NSColor.white.setFill()
+            rect.fill(using: .sourceAtop)
             return true
         }
-        rendered.isTemplate = (mode == .monochrome)
+        rendered.isTemplate = false
         return rendered
     }
 
@@ -60,14 +60,12 @@ public enum BrandIconRenderer {
     }
 
     private static func locateSVGURL(named name: String) -> URL? {
-        // 1. Packaged .app bundle Resources/Icons/
         if let mainURL = Bundle.main.url(forResource: name, withExtension: "svg", subdirectory: "Icons") {
             return mainURL
         }
         if let mainRootURL = Bundle.main.url(forResource: name, withExtension: "svg") {
             return mainRootURL
         }
-        // 2. SwiftPM Bundle.module Resources/Icons/
         if let moduleURL = Bundle.module.url(forResource: name, withExtension: "svg", subdirectory: "Icons") {
             return moduleURL
         }
@@ -80,31 +78,19 @@ public enum BrandIconRenderer {
 
 public struct BrandBadgeView: View {
     public let provider: ProviderID
-    public var size: CGFloat = 18
-    public var iconMode: IconColorMode = .brand
+    public var size: CGFloat = 16
 
-    public init(provider: ProviderID, size: CGFloat = 18, iconMode: IconColorMode = .brand) {
+    public init(provider: ProviderID, size: CGFloat = 16) {
         self.provider = provider
         self.size = size
-        self.iconMode = iconMode
     }
 
     public var body: some View {
-        let img = BrandIconRenderer.statusIcon(for: provider, size: size, mode: iconMode)
-        if iconMode == .monochrome {
-            Image(nsImage: img)
-                .renderingMode(.template)
-                .resizable()
-                .interpolation(.high)
-                .scaledToFit()
-                .frame(width: size, height: size)
-        } else {
-            Image(nsImage: img)
-                .renderingMode(.original)
-                .resizable()
-                .interpolation(.high)
-                .scaledToFit()
-                .frame(width: size, height: size)
-        }
+        Image(nsImage: BrandIconRenderer.whiteIcon(for: provider, size: size))
+            .renderingMode(.original)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: size, height: size)
     }
 }

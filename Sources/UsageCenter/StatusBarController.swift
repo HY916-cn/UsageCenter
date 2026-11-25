@@ -3,6 +3,7 @@ import Combine
 import SwiftUI
 import UsageCenterCore
 
+/// Pure white SVG + luminous high-contrast rendering in the menu bar.
 enum StatusSegmentRenderer {
     static let barHeight: CGFloat = 22
 
@@ -21,11 +22,11 @@ enum StatusSegmentRenderer {
         let isStale: Bool
     }
 
-    private static let ringSize: CGFloat = 17.0
-    private static let barWidth: CGFloat = 24.0
+    private static let ringSize: CGFloat = 16.5
+    private static let barWidth: CGFloat = 22.0
     private static let barHeightVal: CGFloat = 3.0
-    private static let iconSize: CGFloat = 15.0
-    private static let unitGap: CGFloat = 6.0
+    private static let iconSize: CGFloat = 14.5
+    private static let unitGap: CGFloat = 5.5
 
     static func buildLayout(
         config: ProviderSectionConfig,
@@ -35,24 +36,17 @@ enum StatusSegmentRenderer {
     ) -> SegmentLayout {
         let style = preferences.effectiveStyle(for: config.provider)
 
-        // Developer Preview Override
         if preferences.developerPreviewEnabled {
             if config.provider == .deepseek {
-                let unit = MetricUnit(
-                    primaryText: "¥36.44",
-                    captionText: "余额",
-                    quotaPercent: 72,
-                    timePercent: nil,
-                    attention: .normal
-                )
+                let unit = MetricUnit(primaryText: "¥36.44", captionText: "余额", quotaPercent: 72, timePercent: nil, attention: .normal)
                 let w = computeTotalWidth(units: [unit], style: .statsMini, monospaced: preferences.monospacedDigits)
                 return SegmentLayout(units: [unit], style: .statsMini, size: NSSize(width: w, height: barHeight), isStale: false)
             }
             let q = Int(preferences.developerPreviewRemaining.rounded())
             let t = preferences.developerPreviewTimeRemaining
             let att: QuotaAttentionLevel = q < 20 ? .critical : (Double(q) < t ? .warning : .normal)
-            let u1 = MetricUnit(primaryText: "\(q)%", captionText: "5h·3h", quotaPercent: Double(q), timePercent: t, attention: att)
-            let u2 = MetricUnit(primaryText: "\(max(0, q - 8))%", captionText: "周·5d", quotaPercent: Double(max(0, q - 8)), timePercent: min(100, t + 15), attention: att)
+            let u1 = MetricUnit(primaryText: "\(q)%", captionText: "5h", quotaPercent: Double(q), timePercent: t, attention: att)
+            let u2 = MetricUnit(primaryText: "\(max(0, q - 8))%", captionText: "7d", quotaPercent: Double(max(0, q - 8)), timePercent: min(100, t + 15), attention: att)
             let units = (config.windowVisibility == .both) ? [u1, u2] : [u1]
             let w = computeTotalWidth(units: units, style: style, monospaced: preferences.monospacedDigits)
             return SegmentLayout(units: units, style: style, size: NSSize(width: w, height: barHeight), isStale: false)
@@ -60,29 +54,23 @@ enum StatusSegmentRenderer {
 
         if config.provider == .deepseek {
             let mainText: String
-            let caption: String = config.showsProviderLabel ? "DSH" : "余额"
             let attention: QuotaAttentionLevel
-            let progress: Double?
-
             if let bal = snapshot.preferredBalance(currencyPreference: preferences.deepSeekCurrencyPreference) {
                 mainText = bal.formattedTotal
                 let amount = bal.numericTotal
-                progress = min(100, max(6, amount))
                 attention = (snapshot.isAvailable == false || amount <= 1) ? .critical : (amount < 10 ? .warning : .normal)
             } else if snapshot.isLoading {
                 mainText = "…"
-                progress = nil
                 attention = .normal
             } else {
                 mainText = "--"
-                progress = nil
                 attention = .normal
             }
 
             let unit = MetricUnit(
                 primaryText: mainText,
-                captionText: caption,
-                quotaPercent: progress,
+                captionText: "余额",
+                quotaPercent: nil,
                 timePercent: nil,
                 attention: attention
             )
@@ -114,10 +102,11 @@ enum StatusSegmentRenderer {
             let timeVal = preferences.percentMode == .remaining ? remTime : remTime.map { 100.0 - $0 }
 
             let caption: String
-            if let shortTime = window.shortTimeLabel(at: now, mode: effectiveTimeMode) {
-                caption = "\(tag)·\(shortTime)"
-            } else {
+            switch effectiveTimeMode {
+            case .hidden:
                 caption = tag
+            case .countdown, .clock:
+                caption = window.shortTimeLabel(at: now, mode: effectiveTimeMode) ?? tag
             }
 
             return MetricUnit(
@@ -134,15 +123,15 @@ enum StatusSegmentRenderer {
         case .both:
             units = [
                 makeUnit(window: pair.fiveHour, tag: "5h"),
-                makeUnit(window: pair.weekly, tag: "周")
+                makeUnit(window: pair.weekly, tag: "7d")
             ]
         case .mostConstrained:
-            let tag = (tightest?.kind == .weekly) ? "周" : "5h"
-            units = [makeUnit(window: tightest, tag: config.showsProviderLabel ? config.provider.shortLabel : tag)]
+            let tag = (tightest?.kind == .weekly) ? "7d" : "5h"
+            units = [makeUnit(window: tightest, tag: tag)]
         case .fiveHourOnly:
             units = [makeUnit(window: pair.fiveHour, tag: "5h")]
         case .weeklyOnly:
-            units = [makeUnit(window: pair.weekly, tag: "周")]
+            units = [makeUnit(window: pair.weekly, tag: "7d")]
         }
 
         let width = computeTotalWidth(units: units, style: style, monospaced: preferences.monospacedDigits)
@@ -160,13 +149,13 @@ enum StatusSegmentRenderer {
             : .systemFont(ofSize: 10.5, weight: .semibold)
     }
 
-    private static let captionFont: NSFont = .monospacedDigitSystemFont(ofSize: 6.6, weight: .medium)
+    private static let captionFont: NSFont = .monospacedDigitSystemFont(ofSize: 6.8, weight: .medium)
 
     private static func unitWidth(_ unit: MetricUnit, style: SegmentDisplayStyle, monospaced: Bool) -> CGFloat {
         let pFont = primaryFont(monospaced: monospaced)
         let pW = ceil((unit.primaryText as NSString).size(withAttributes: [.font: pFont]).width)
         let cW = ceil((unit.captionText as NSString).size(withAttributes: [.font: captionFont]).width)
-        let textW = max(27, max(pW, cW) + 2)
+        let textW = max(25, max(pW, cW) + 2)
 
         switch style {
         case .rings:
@@ -198,31 +187,27 @@ enum StatusSegmentRenderer {
     ) {
         if isHovered || isSelected {
             let highlight = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 1), xRadius: 5, yRadius: 5)
-            NSColor.labelColor.withAlphaComponent(isSelected ? 0.16 : 0.08).setFill()
+            NSColor.white.withAlphaComponent(isSelected ? 0.22 : 0.12).setFill()
             highlight.fill()
         }
 
         let midY = rect.midY
         var x = rect.minX + 4.5
 
-        // Official SVG icon beside the segment
-        let iconImg = BrandIconRenderer.statusIcon(
-            for: provider,
-            size: iconSize,
-            mode: preferences.iconColorMode
-        )
+        // Pure White Official SVG Icon
+        let iconImg = BrandIconRenderer.whiteIcon(for: provider, size: iconSize)
         iconImg.draw(in: NSRect(x: x, y: midY - iconSize / 2, width: iconSize, height: iconSize))
         x += iconSize + 4.5
 
         let pFont = primaryFont(monospaced: preferences.monospacedDigits)
         let primaryTextColor: NSColor = layout.isStale
-            ? NSColor.labelColor.withAlphaComponent(0.62)
-            : .labelColor
-        let captionTextColor: NSColor = .secondaryLabelColor
+            ? NSColor.white.withAlphaComponent(0.68)
+            : .white
+        let captionTextColor: NSColor = NSColor.white.withAlphaComponent(0.76)
 
         for (idx, unit) in layout.units.enumerated() {
             let uWidth = unitWidth(unit, style: layout.style, monospaced: preferences.monospacedDigits)
-            let quotaColor = attentionNSColor(unit.attention)
+            let quotaColor = CodexPalette.quotaNSColor(for: unit.attention)
 
             switch layout.style {
             case .rings:
@@ -291,7 +276,6 @@ enum StatusSegmentRenderer {
                 )
 
             case .statsMini:
-                // CodexMeter unified baseline: bold value on top, compact caption below
                 drawPercentageOverCaption(
                     primary: unit.primaryText,
                     caption: unit.captionText,
@@ -315,16 +299,6 @@ enum StatusSegmentRenderer {
             if idx < layout.units.count - 1 {
                 x += unitGap
             }
-        }
-
-        if layout.isStale {
-            drawText(
-                "!",
-                in: NSRect(x: rect.maxX - 6, y: midY - 5, width: 6, height: 11),
-                font: .systemFont(ofSize: 9, weight: .bold),
-                color: .systemOrange,
-                alignment: .center
-            )
         }
     }
 
@@ -359,8 +333,8 @@ enum StatusSegmentRenderer {
         quotaColor: NSColor
     ) {
         let center = NSPoint(x: rect.midX, y: rect.midY)
-        let outerWidth: CGFloat = 2.8
-        let innerWidth: CGFloat = 1.9
+        let outerWidth: CGFloat = 2.6
+        let innerWidth: CGFloat = 1.8
         let outerRadius = max(1, min(rect.width, rect.height) / 2 - outerWidth / 2)
         let innerRadius = max(1, outerRadius - outerWidth / 2 - 0.35 - innerWidth / 2)
 
@@ -369,14 +343,14 @@ enum StatusSegmentRenderer {
             radius: outerRadius,
             lineWidth: outerWidth,
             percent: nil,
-            color: NSColor.labelColor.withAlphaComponent(0.22)
+            color: NSColor.white.withAlphaComponent(0.24)
         )
         guard let quotaPercent else {
             drawText(
                 "?",
                 in: NSRect(x: rect.minX, y: rect.midY - 5, width: rect.width, height: 10),
                 font: .systemFont(ofSize: 8, weight: .semibold),
-                color: .secondaryLabelColor,
+                color: NSColor.white.withAlphaComponent(0.75),
                 alignment: .center
             )
             return
@@ -395,7 +369,7 @@ enum StatusSegmentRenderer {
             radius: innerRadius,
             lineWidth: innerWidth,
             percent: nil,
-            color: CodexPalette.timeBlueNS.withAlphaComponent(0.22)
+            color: CodexPalette.timeBlueNS.withAlphaComponent(0.26)
         )
         drawArc(
             center: center,
@@ -441,7 +415,7 @@ enum StatusSegmentRenderer {
     private static func drawPillBar(in rect: NSRect, percent: Double?, color: NSColor) {
         let r = rect.height / 2
         let track = NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r)
-        NSColor.labelColor.withAlphaComponent(0.22).setFill()
+        NSColor.white.withAlphaComponent(0.24).setFill()
         track.fill()
 
         guard let percent else { return }
@@ -475,14 +449,6 @@ enum StatusSegmentRenderer {
         ])
     }
 
-    private static func attentionNSColor(_ level: QuotaAttentionLevel) -> NSColor {
-        switch level {
-        case .normal: return .labelColor
-        case .warning: return CodexPalette.warningYellowNS
-        case .critical: return CodexPalette.criticalRedNS
-        }
-    }
-
     static func renderCompositePreviewImage(
         preferences: UsageCenterPreferences,
         snapshots: [ProviderID: ProviderSnapshot]
@@ -490,7 +456,7 @@ enum StatusSegmentRenderer {
         let enabled = preferences.enabledSections
         guard !enabled.isEmpty else {
             return NSImage(size: NSSize(width: 100, height: barHeight), flipped: false) { rect in
-                drawText("未启用分段", in: rect.insetBy(dx: 6, dy: 4), font: .systemFont(ofSize: 11), color: .secondaryLabelColor, alignment: .center)
+                drawText("未启用分段", in: rect.insetBy(dx: 6, dy: 4), font: .systemFont(ofSize: 11), color: .white, alignment: .center)
                 return true
             }
         }
@@ -525,7 +491,7 @@ enum StatusSegmentRenderer {
                         line.move(to: NSPoint(x: lineX, y: 4.5))
                         line.line(to: NSPoint(x: lineX, y: barHeight - 4.5))
                         line.lineWidth = 1
-                        NSColor.separatorColor.withAlphaComponent(0.55).setStroke()
+                        NSColor.white.withAlphaComponent(0.28).setStroke()
                         line.stroke()
                     }
                     x += gapWidth
@@ -538,40 +504,82 @@ enum StatusSegmentRenderer {
     }
 }
 
-// MARK: - Interactive Segment Subviews
+// MARK: - Coordinate-Exact Composite Status Bar View
 
-final class ProviderSegmentItemView: NSView {
-    let provider: ProviderID
-    var layout: StatusSegmentRenderer.SegmentLayout
-    var preferences: UsageCenterPreferences
-    var isSelectedSegment: Bool = false {
-        didSet { if oldValue != isSelectedSegment { needsDisplay = true } }
+final class CompositeStatusBarView: NSView {
+    struct Slot {
+        let provider: ProviderID
+        let layout: StatusSegmentRenderer.SegmentLayout
+        let frame: NSRect
     }
-    var onLeftClick: ((ProviderID, NSView) -> Void)?
-    var onRightClick: ((NSEvent) -> Void)?
 
-    private var isHovered = false
+    private(set) var slots: [Slot] = []
+    private var preferences = UsageCenterPreferences()
+    private var hoveredProvider: ProviderID?
+    private var selectedProvider: ProviderID?
     private var trackingRef: NSTrackingArea?
 
-    init(provider: ProviderID, layout: StatusSegmentRenderer.SegmentLayout, preferences: UsageCenterPreferences) {
-        self.provider = provider
-        self.layout = layout
-        self.preferences = preferences
-        super.init(frame: NSRect(origin: .zero, size: layout.size))
-        self.toolTip = "\(provider.displayName) — 点击查看详情"
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        true
-    }
-
+    // Let NSStatusBarButton handle all click events cleanly via target/action
     override func hitTest(_ point: NSPoint) -> NSView? {
-        frame.contains(point) ? self : nil
+        nil
+    }
+
+    func update(
+        preferences: UsageCenterPreferences,
+        snapshots: [ProviderID: ProviderSnapshot],
+        selectedProvider: ProviderID?
+    ) -> CGFloat {
+        self.preferences = preferences
+        self.selectedProvider = selectedProvider
+        let enabled = preferences.enabledSections
+        let now = Date()
+
+        guard !enabled.isEmpty else {
+            slots = []
+            let fallback: CGFloat = 28
+            setFrameSize(NSSize(width: fallback, height: StatusSegmentRenderer.barHeight))
+            needsDisplay = true
+            return fallback
+        }
+
+        let gapWidth: CGFloat = preferences.showsDividers ? 9 : 4
+        var cursorX: CGFloat = 2
+        var built: [Slot] = []
+
+        for (idx, cfg) in enabled.enumerated() {
+            let snap = snapshots[cfg.provider] ?? ProviderSnapshot(provider: cfg.provider)
+            let layout = StatusSegmentRenderer.buildLayout(
+                config: cfg,
+                snapshot: snap,
+                preferences: preferences,
+                now: now
+            )
+            let rect = NSRect(x: cursorX, y: 0, width: layout.size.width, height: StatusSegmentRenderer.barHeight)
+            built.append(Slot(provider: cfg.provider, layout: layout, frame: rect))
+            cursorX += layout.size.width
+            if idx < enabled.count - 1 {
+                cursorX += gapWidth
+            }
+        }
+        cursorX += 2
+
+        slots = built
+        setFrameSize(NSSize(width: cursorX, height: StatusSegmentRenderer.barHeight))
+        needsDisplay = true
+        return cursorX
+    }
+
+    /// Resolves the exact clicked slot using horizontal X coordinate in this view's space.
+    func resolveSlot(atLocalX x: CGFloat) -> Slot? {
+        guard !slots.isEmpty else { return nil }
+        if let exact = slots.first(where: { x >= $0.frame.minX && x <= $0.frame.maxX }) {
+            return exact
+        }
+        return slots.min(by: { abs($0.frame.midX - x) < abs($1.frame.midX - x) })
+    }
+
+    func slot(for provider: ProviderID) -> Slot? {
+        slots.first { $0.provider == provider }
     }
 
     override func updateTrackingAreas() {
@@ -581,7 +589,7 @@ final class ProviderSegmentItemView: NSView {
         }
         let area = NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
@@ -589,179 +597,154 @@ final class ProviderSegmentItemView: NSView {
         trackingRef = area
     }
 
-    override func mouseEntered(with event: NSEvent) {
-        isHovered = true
-        needsDisplay = true
+    override func mouseMoved(with event: NSEvent) {
+        let pt = convert(event.locationInWindow, from: nil)
+        let hit = resolveSlot(atLocalX: pt.x)?.provider
+        if hit != hoveredProvider {
+            hoveredProvider = hit
+            needsDisplay = true
+        }
     }
 
     override func mouseExited(with event: NSEvent) {
-        isHovered = false
-        needsDisplay = true
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        if event.modifierFlags.contains(.control) {
-            onRightClick?(event)
-            return
-        }
-        onLeftClick?(provider, self)
-    }
-
-    override func rightMouseDown(with event: NSEvent) {
-        onRightClick?(event)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        StatusSegmentRenderer.drawSegment(
-            in: bounds,
-            provider: provider,
-            layout: layout,
-            preferences: preferences,
-            isHovered: isHovered,
-            isSelected: isSelectedSegment
-        )
-    }
-}
-
-final class CompositeStatusBarView: NSView {
-    var onSelectSegment: ((ProviderID, NSView) -> Void)?
-    var onRightClick: ((NSEvent) -> Void)?
-
-    private var segmentViews: [ProviderID: ProviderSegmentItemView] = [:]
-    private var dividerXs: [CGFloat] = []
-    private var showsDividers = true
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        true
-    }
-
-    func update(
-        preferences: UsageCenterPreferences,
-        snapshots: [ProviderID: ProviderSnapshot],
-        selectedProvider: ProviderID?
-    ) -> CGFloat {
-        self.showsDividers = preferences.showsDividers
-        let enabled = preferences.enabledSections
-        let now = Date()
-
-        let activeIDs = Set(enabled.map(\.provider))
-        for (id, view) in segmentViews where !activeIDs.contains(id) {
-            view.removeFromSuperview()
-            segmentViews.removeValue(forKey: id)
-        }
-
-        guard !enabled.isEmpty else {
-            dividerXs = []
-            let fallback: CGFloat = 28
-            setFrameSize(NSSize(width: fallback, height: StatusSegmentRenderer.barHeight))
+        if hoveredProvider != nil {
+            hoveredProvider = nil
             needsDisplay = true
-            return fallback
         }
-
-        let gapWidth: CGFloat = preferences.showsDividers ? 9 : 4
-        var cursorX: CGFloat = 2
-        var newDividers: [CGFloat] = []
-
-        for (idx, cfg) in enabled.enumerated() {
-            let snap = snapshots[cfg.provider] ?? ProviderSnapshot(provider: cfg.provider)
-            let segLayout = StatusSegmentRenderer.buildLayout(
-                config: cfg,
-                snapshot: snap,
-                preferences: preferences,
-                now: now
-            )
-
-            let segView: ProviderSegmentItemView
-            if let existing = segmentViews[cfg.provider] {
-                existing.layout = segLayout
-                existing.preferences = preferences
-                segView = existing
-            } else {
-                let created = ProviderSegmentItemView(
-                    provider: cfg.provider,
-                    layout: segLayout,
-                    preferences: preferences
-                )
-                created.onLeftClick = { [weak self] provider, anchorView in
-                    self?.onSelectSegment?(provider, anchorView)
-                }
-                created.onRightClick = { [weak self] event in
-                    self?.onRightClick?(event)
-                }
-                addSubview(created)
-                segmentViews[cfg.provider] = created
-                segView = created
-            }
-
-            segView.isSelectedSegment = (selectedProvider == cfg.provider)
-            segView.frame = NSRect(
-                x: cursorX,
-                y: 0,
-                width: segLayout.size.width,
-                height: StatusSegmentRenderer.barHeight
-            )
-            segView.needsDisplay = true
-
-            cursorX += segLayout.size.width
-            if idx < enabled.count - 1 {
-                if preferences.showsDividers {
-                    newDividers.append(floor(cursorX + gapWidth / 2) + 0.5)
-                }
-                cursorX += gapWidth
-            }
-        }
-        cursorX += 2
-
-        dividerXs = newDividers
-        setFrameSize(NSSize(width: cursorX, height: StatusSegmentRenderer.barHeight))
-        needsDisplay = true
-        return cursorX
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        if event.modifierFlags.contains(.control) {
-            onRightClick?(event)
-            return
-        }
-        if let first = subviews.compactMap({ $0 as? ProviderSegmentItemView }).first {
-            onSelectSegment?(first.provider, first)
-        }
-    }
-
-    override func rightMouseDown(with event: NSEvent) {
-        onRightClick?(event)
     }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
-        if segmentViews.isEmpty {
+        guard !slots.isEmpty else {
             let r = NSRect(x: bounds.midX - 7.5, y: bounds.midY - 7.5, width: 15, height: 15)
-            BrandIconRenderer.statusIcon(for: .antigravity, size: 15, mode: .monochrome).draw(in: r)
+            BrandIconRenderer.whiteIcon(for: .antigravity, size: 15).draw(in: r)
             return
         }
 
-        guard showsDividers else { return }
-        NSColor.separatorColor.withAlphaComponent(0.55).setStroke()
-        for x in dividerXs {
-            let line = NSBezierPath()
-            line.move(to: NSPoint(x: x, y: 4.5))
-            line.line(to: NSPoint(x: x, y: bounds.height - 4.5))
-            line.lineWidth = 1
-            line.stroke()
+        let gapWidth: CGFloat = preferences.showsDividers ? 9 : 4
+        for (idx, slot) in slots.enumerated() {
+            StatusSegmentRenderer.drawSegment(
+                in: slot.frame,
+                provider: slot.provider,
+                layout: slot.layout,
+                preferences: preferences,
+                isHovered: hoveredProvider == slot.provider,
+                isSelected: selectedProvider == slot.provider
+            )
+            if preferences.showsDividers, idx < slots.count - 1 {
+                let lineX = floor(slot.frame.maxX + gapWidth / 2) + 0.5
+                let line = NSBezierPath()
+                line.move(to: NSPoint(x: lineX, y: 4.5))
+                line.line(to: NSPoint(x: lineX, y: bounds.height - 4.5))
+                line.lineWidth = 1
+                NSColor.white.withAlphaComponent(0.28).setStroke()
+                line.stroke()
+            }
         }
     }
 }
 
+// MARK: - Native macOS 27 NSGlassEffectView Unscrolled Floating Popup Panel
+
 @MainActor
-final class StatusBarController: NSObject, NSPopoverDelegate {
+final class LiquidGlassPopupPanel: NSPanel {
+    private let glassContainer = NSGlassEffectView()
+    private var hostingView: NSHostingView<ProviderDetailPopoverView>?
+
+    init() {
+        super.init(
+            contentRect: NSRect(x: 0, y: 0, width: 376, height: 420),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        self.isOpaque = false
+        self.backgroundColor = .clear
+        self.hasShadow = true
+        self.level = .statusBar
+        self.collectionBehavior = [.transient, .moveToActiveSpace, .ignoresCycle]
+        self.hidesOnDeactivate = false
+        self.appearance = NSAppearance(named: .darkAqua)
+
+        glassContainer.cornerRadius = 20
+        glassContainer.style = .regular
+        glassContainer.appearance = NSAppearance(named: .darkAqua)
+        self.contentView = glassContainer
+    }
+
+    override var canBecomeKey: Bool { true }
+
+    func present(
+        rootView: ProviderDetailPopoverView,
+        belowScreenRect anchorRect: NSRect
+    ) {
+        let host: NSHostingView<ProviderDetailPopoverView>
+        if let existing = hostingView {
+            existing.rootView = rootView
+            host = existing
+        } else {
+            let created = NSHostingView(rootView: rootView)
+            created.sizingOptions = [.intrinsicContentSize]
+            glassContainer.contentView = created
+            hostingView = created
+            host = created
+        }
+
+        host.layoutSubtreeIfNeeded()
+        let fitting = host.fittingSize
+        let panelWidth: CGFloat = max(376, ceil(fitting.width))
+        let panelHeight: CGFloat = max(180, ceil(fitting.height))
+
+        let screen = NSScreen.screens.first { $0.frame.intersects(anchorRect) } ?? NSScreen.main
+        let visibleFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+
+        var originX = round(anchorRect.midX - panelWidth / 2)
+        originX = min(max(visibleFrame.minX + 8, originX), visibleFrame.maxX - panelWidth - 8)
+        let originY = round(anchorRect.minY - panelHeight - 6)
+
+        let targetFrame = NSRect(x: originX, y: originY, width: panelWidth, height: panelHeight)
+        glassContainer.frame = NSRect(origin: .zero, size: targetFrame.size)
+        host.frame = glassContainer.bounds
+
+        setFrame(targetFrame, display: true)
+        makeKeyAndOrderFront(nil)
+    }
+
+    func resizeToFitCurrentContent(belowScreenRect anchorRect: NSRect) {
+        guard isVisible, let host = hostingView else { return }
+        host.layoutSubtreeIfNeeded()
+        let fitting = host.fittingSize
+        let panelWidth: CGFloat = max(376, ceil(fitting.width))
+        let panelHeight: CGFloat = max(180, ceil(fitting.height))
+        guard abs(frame.height - panelHeight) > 1 || abs(frame.midX - anchorRect.midX) > 2 else { return }
+
+        let screen = NSScreen.screens.first { $0.frame.intersects(anchorRect) } ?? NSScreen.main
+        let visibleFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        var originX = round(anchorRect.midX - panelWidth / 2)
+        originX = min(max(visibleFrame.minX + 8, originX), visibleFrame.maxX - panelWidth - 8)
+        let originY = round(anchorRect.minY - panelHeight - 6)
+
+        let targetFrame = NSRect(x: originX, y: originY, width: panelWidth, height: panelHeight)
+        glassContainer.frame = NSRect(origin: .zero, size: targetFrame.size)
+        host.frame = glassContainer.bounds
+        setFrame(targetFrame, display: true)
+    }
+}
+
+// MARK: - StatusBarController
+
+@MainActor
+final class StatusBarController: NSObject {
     private let store: UsageCenterStore
     private let onOpenSettings: () -> Void
     private let onOpenHistory: (ProviderID) -> Void
     private let statusItem: NSStatusItem
     private let compositeView = CompositeStatusBarView(frame: NSRect(x: 0, y: 0, width: 120, height: StatusSegmentRenderer.barHeight))
-    private var activePopover: NSPopover?
+    private let popupPanel = LiquidGlassPopupPanel()
     private var openedProvider: ProviderID?
+    private var globalClickMonitor: Any?
+    private var localKeyMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
     private var tickTimer: Timer?
 
@@ -786,15 +769,12 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         guard let button = statusItem.button else { return }
         button.image = NSImage()
         button.title = ""
+        button.target = self
+        button.action = #selector(handleStatusButtonAction(_:))
+        button.sendAction(on: [.leftMouseDown, .rightMouseDown])
+
         compositeView.frame = NSRect(x: 0, y: 0, width: 120, height: StatusSegmentRenderer.barHeight)
         button.addSubview(compositeView)
-
-        compositeView.onSelectSegment = { [weak self] provider, anchorView in
-            self?.toggleSegmentPopover(for: provider, relativeTo: anchorView)
-        }
-        compositeView.onRightClick = { [weak self] event in
-            self?.presentContextMenu(with: event)
-        }
 
         rebuildBar()
     }
@@ -804,7 +784,13 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             .combineLatest(store.$snapshots)
             .receive(on: RunLoop.main)
             .sink { [weak self] _, _ in
-                self?.rebuildBar()
+                guard let self else { return }
+                self.rebuildBar()
+                if let opened = self.openedProvider,
+                   self.popupPanel.isVisible,
+                   let anchorRect = self.screenRect(for: opened) {
+                    self.popupPanel.resizeToFitCurrentContent(belowScreenRect: anchorRect)
+                }
             }
             .store(in: &cancellables)
     }
@@ -824,7 +810,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         let width = compositeView.update(
             preferences: store.preferences,
             snapshots: store.snapshots,
-            selectedProvider: (activePopover?.isShown == true) ? openedProvider : nil
+            selectedProvider: popupPanel.isVisible ? openedProvider : nil
         )
         statusItem.length = width
         if let button = statusItem.button {
@@ -833,17 +819,39 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         }
     }
 
-    private func toggleSegmentPopover(for provider: ProviderID, relativeTo anchorView: NSView) {
-        if let current = activePopover, current.isShown, openedProvider == provider {
-            closeActivePopover()
+    @objc private func handleStatusButtonAction(_ sender: NSStatusBarButton) {
+        guard let event = NSApp.currentEvent else { return }
+        if event.type == .rightMouseDown || event.modifierFlags.contains(.control) {
+            presentContextMenu(with: event, for: sender)
             return
         }
 
-        if let previous = activePopover {
-            previous.delegate = nil
-            previous.animates = false
-            previous.close()
-            activePopover = nil
+        guard let win = sender.window else { return }
+        // Convert exact screen cursor coordinate into CompositeStatusBarView local X
+        let screenPoint = NSEvent.mouseLocation
+        let windowPoint = win.convertPoint(fromScreen: screenPoint)
+        let localPoint = compositeView.convert(windowPoint, from: nil)
+
+        guard let clickedSlot = compositeView.resolveSlot(atLocalX: localPoint.x) else {
+            return
+        }
+        toggleSegmentPopup(for: clickedSlot.provider)
+    }
+
+    private func screenRect(for provider: ProviderID) -> NSRect? {
+        guard let button = statusItem.button,
+              let win = button.window,
+              let slot = compositeView.slot(for: provider) else {
+            return nil
+        }
+        let rectInWin = compositeView.convert(slot.frame, to: nil)
+        return win.convertToScreen(rectInWin)
+    }
+
+    private func toggleSegmentPopup(for provider: ProviderID) {
+        if popupPanel.isVisible, openedProvider == provider {
+            closePopup()
+            return
         }
 
         openedProvider = provider
@@ -851,55 +859,73 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         store.setPopoverVisible(true)
         rebuildBar()
 
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.animates = true
-        popover.delegate = self
+        guard let anchorRect = screenRect(for: provider) else { return }
 
         let detailView = ProviderDetailPopoverView(
-            provider: provider,
             store: store,
             onOpenSettings: { [weak self] in
-                self?.closeActivePopover()
+                self?.closePopup()
                 self?.onOpenSettings()
             },
             onOpenHistory: { [weak self] targetProvider in
-                self?.closeActivePopover()
+                self?.closePopup()
                 self?.onOpenHistory(targetProvider)
             }
         )
-        popover.contentViewController = NSHostingController(rootView: detailView)
-        activePopover = popover
-
-        popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
+        popupPanel.present(rootView: detailView, belowScreenRect: anchorRect)
+        installDismissMonitors()
     }
 
-    func closeActivePopover() {
-        if let current = activePopover {
-            current.delegate = nil
-            current.animates = false
-            current.close()
-            activePopover = nil
+    func closePopup() {
+        removeDismissMonitors()
+        if popupPanel.isVisible {
+            popupPanel.orderOut(nil)
         }
         openedProvider = nil
         store.setPopoverVisible(false)
         rebuildBar()
     }
 
-    func popoverDidClose(_ notification: Notification) {
-        guard let closed = notification.object as? NSPopover, closed === activePopover else {
-            return
+    private func installDismissMonitors() {
+        removeDismissMonitors()
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.popupPanel.isVisible else { return }
+                let mouse = NSEvent.mouseLocation
+                if self.popupPanel.frame.contains(mouse) { return }
+                if let btn = self.statusItem.button,
+                   let win = btn.window,
+                   win.convertToScreen(btn.convert(btn.bounds, to: nil)).contains(mouse) {
+                    return
+                }
+                self.closePopup()
+            }
         }
-        activePopover = nil
-        openedProvider = nil
-        store.setPopoverVisible(false)
-        rebuildBar()
+
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 53 { // Esc
+                self?.closePopup()
+                return nil
+            }
+            return event
+        }
     }
 
-    private func presentContextMenu(with event: NSEvent) {
+    private func removeDismissMonitors() {
+        if let globalClickMonitor {
+            NSEvent.removeMonitor(globalClickMonitor)
+            self.globalClickMonitor = nil
+        }
+        if let localKeyMonitor {
+            NSEvent.removeMonitor(localKeyMonitor)
+            self.localKeyMonitor = nil
+        }
+    }
+
+    private func presentContextMenu(with event: NSEvent, for button: NSStatusBarButton) {
+        closePopup()
         let menu = NSMenu()
-        let refreshItem = NSMenuItem(title: "立即刷新全部", action: #selector(triggerRefreshAll), keyEquivalent: "r")
+        let refreshItem = NSMenuItem(title: "刷新全部", action: #selector(triggerRefreshAll), keyEquivalent: "r")
         refreshItem.target = self
         menu.addItem(refreshItem)
 
@@ -913,13 +939,11 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "退出 UsageCenter", action: #selector(triggerQuit), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "退出", action: #selector(triggerQuit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
-        if let button = statusItem.button {
-            NSMenu.popUpContextMenu(menu, with: event, for: button)
-        }
+        NSMenu.popUpContextMenu(menu, with: event, for: button)
     }
 
     @objc private func triggerRefreshAll() {
@@ -927,12 +951,10 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     }
 
     @objc private func triggerOpenHistory() {
-        closeActivePopover()
         onOpenHistory(store.activeProvider)
     }
 
     @objc private func triggerOpenSettings() {
-        closeActivePopover()
         onOpenSettings()
     }
 

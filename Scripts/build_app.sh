@@ -6,7 +6,7 @@ APP_NAME="UsageCenter"
 DIST_DIR="${ROOT_DIR}/dist"
 APP_BUNDLE="${DIST_DIR}/${APP_NAME}.app"
 
-echo "==> Building ${APP_NAME} (Release)..."
+echo "==> Building ${APP_NAME} (Release, macOS 26+ Liquid Glass)..."
 cd "${ROOT_DIR}"
 swift build -c release
 
@@ -20,7 +20,6 @@ mkdir -p "${APP_BUNDLE}/Contents/Resources/Icons"
 cp "${BIN_PATH}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 
-# Copy official SVG assets directly into Contents/Resources/Icons and SwiftPM resource bundle if present
 cp "${ROOT_DIR}/Sources/UsageCenter/Resources/Icons/"*.svg "${APP_BUNDLE}/Contents/Resources/Icons/"
 if [ -d "${BIN_DIR}/UsageCenter_UsageCenter.bundle" ]; then
     cp -R "${BIN_DIR}/UsageCenter_UsageCenter.bundle" "${APP_BUNDLE}/Contents/Resources/"
@@ -46,11 +45,13 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.1.0</string>
+    <string>1.2.0</string>
     <key>CFBundleVersion</key>
-    <string>2</string>
+    <string>3</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>26.0</string>
+    <key>UIDesignRequiresCompatibility</key>
+    <false/>
     <key>LSUIElement</key>
     <true/>
     <key>NSHighResolutionCapable</key>

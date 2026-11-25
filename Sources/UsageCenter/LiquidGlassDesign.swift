@@ -3,47 +3,43 @@ import SwiftUI
 import UsageCenterCore
 
 enum CodexPalette {
-    static let timeBlueNS = NSColor(srgbRed: 0.30, green: 0.72, blue: 1.0, alpha: 1.0)
-    static let warningYellowNS = NSColor.systemYellow
-    static let criticalRedNS = NSColor.systemRed
+    // High-contrast luminous colors — never black or dark-gray on Liquid Glass
+    static let normalWhiteNS = NSColor.white
+    static let timeBlueNS = NSColor(srgbRed: 0.34, green: 0.76, blue: 1.0, alpha: 1.0)
+    static let warningYellowNS = NSColor(srgbRed: 1.0, green: 0.84, blue: 0.16, alpha: 1.0)
+    static let criticalRedNS = NSColor(srgbRed: 1.0, green: 0.32, blue: 0.32, alpha: 1.0)
 
-    static let chartAccent = Color(red: 0.22, green: 0.72, blue: 0.79)
-    static let chartAccentBright = Color(red: 0.33, green: 0.82, blue: 0.88)
+    static let normalWhite = Color.white
+    static let timeBlue = Color(red: 0.34, green: 0.76, blue: 1.0)
+    static let warningYellow = Color(red: 1.0, green: 0.84, blue: 0.16)
+    static let criticalRed = Color(red: 1.0, green: 0.32, blue: 0.32)
 
-    static func quotaSwiftUIColor(for level: QuotaAttentionLevel, colorScheme: ColorScheme) -> Color {
-        let nsColor: NSColor = switch level {
-        case .normal: .labelColor
-        case .warning: warningYellowNS
-        case .critical: criticalRedNS
+    static let chartAccent = Color(red: 0.24, green: 0.75, blue: 0.84)
+    static let chartAccentBright = Color(red: 0.38, green: 0.86, blue: 0.94)
+
+    static func quotaColor(for level: QuotaAttentionLevel) -> Color {
+        switch level {
+        case .normal: return normalWhite
+        case .warning: return warningYellow
+        case .critical: return criticalRed
         }
-        return resolvedColor(nsColor, for: colorScheme)
     }
 
-    static func timeSwiftUIColor(for colorScheme: ColorScheme) -> Color {
-        resolvedColor(timeBlueNS, for: colorScheme)
-    }
-
-    private static func resolvedColor(_ nsColor: NSColor, for scheme: ColorScheme) -> Color {
-        let name: NSAppearance.Name = scheme == .dark ? .darkAqua : .aqua
-        guard let appearance = NSAppearance(named: name) else {
-            return Color(nsColor: nsColor)
+    static func quotaNSColor(for level: QuotaAttentionLevel) -> NSColor {
+        switch level {
+        case .normal: return normalWhiteNS
+        case .warning: return warningYellowNS
+        case .critical: return criticalRedNS
         }
-        var resolved = nsColor
-        appearance.performAsCurrentDrawingAppearance {
-            resolved = nsColor.usingColorSpace(.sRGB) ?? nsColor
-        }
-        return Color(nsColor: resolved)
     }
 }
 
 struct HistoryBackdrop: View {
-    @Environment(\.colorScheme) private var colorScheme
-
     var body: some View {
         ZStack {
-            (colorScheme == .dark ? Color.black : Color(nsColor: .windowBackgroundColor))
+            Color(red: 0.04, green: 0.05, blue: 0.06)
             RadialGradient(
-                colors: [CodexPalette.chartAccent.opacity(colorScheme == .dark ? 0.16 : 0.10), .clear],
+                colors: [CodexPalette.chartAccent.opacity(0.18), .clear],
                 center: .topLeading,
                 startRadius: 10,
                 endRadius: 620
@@ -54,75 +50,41 @@ struct HistoryBackdrop: View {
 }
 
 extension View {
-    @ViewBuilder
-    func liquidHistoryCard(cornerRadius: CGFloat = 22) -> some View {
-        if #available(macOS 26.0, *) {
-            self.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
-        } else {
-            self
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius))
-                .overlay {
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .strokeBorder(.white.opacity(0.10), lineWidth: 1)
-                }
-        }
+    /// Native macOS 26/27 Liquid Glass card surface.
+    func liquidGlassSurface(cornerRadius: CGFloat = 20, interactive: Bool = false) -> some View {
+        self.glassEffect(
+            interactive ? .regular.interactive() : .regular,
+            in: .rect(cornerRadius: cornerRadius)
+        )
     }
 
-    func applyAppearancePreference(_ pref: AppAppearancePreference) -> some View {
-        let scheme: ColorScheme? = switch pref {
-        case .system: nil
-        case .light: .light
-        case .dark: .dark
-        }
-        return self
-            .preferredColorScheme(scheme)
-            .background(WindowAppearanceBridge(preference: pref))
+    /// Enforces crisp luminous dark Liquid Glass typography so black text/elements never appear.
+    func applyDarkLiquidGlassTheme() -> some View {
+        self
+            .preferredColorScheme(.dark)
+            .environment(\.colorScheme, .dark)
+            .foregroundStyle(.white)
+            .background(DarkAquaWindowBridge())
     }
 }
 
-struct WindowAppearanceBridge: NSViewRepresentable {
-    let preference: AppAppearancePreference
-
+struct DarkAquaWindowBridge: NSViewRepresentable {
     func makeNSView(context: Context) -> BridgeView {
-        BridgeView(preference: preference)
+        BridgeView()
     }
 
     func updateNSView(_ nsView: BridgeView, context: Context) {
-        nsView.update(preference: preference)
+        nsView.apply()
     }
 
     final class BridgeView: NSView {
-        private var preference: AppAppearancePreference
-
-        init(preference: AppAppearancePreference) {
-            self.preference = preference
-            super.init(frame: .zero)
-        }
-
-        @available(*, unavailable)
-        required init?(coder: NSCoder) {
-            fatalError("init(coder:) has not been implemented")
-        }
-
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             apply()
         }
 
-        func update(preference: AppAppearancePreference) {
-            self.preference = preference
-            apply()
-        }
-
-        private func apply() {
-            switch preference {
-            case .system:
-                window?.appearance = nil
-            case .light:
-                window?.appearance = NSAppearance(named: .aqua)
-            case .dark:
-                window?.appearance = NSAppearance(named: .darkAqua)
-            }
+        func apply() {
+            window?.appearance = NSAppearance(named: .darkAqua)
         }
     }
 }
