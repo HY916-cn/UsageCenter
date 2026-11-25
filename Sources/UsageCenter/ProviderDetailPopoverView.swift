@@ -454,11 +454,24 @@ struct ProviderDetailPopoverView: View {
                         .frame(height: 118)
 
                         HStack(spacing: 12) {
-                            Label(series.isBalanceSeries ? "余额曲线" : "实际剩余", systemImage: "waveform.path")
-                                .foregroundStyle(CodexPalette.chartAccentBright)
+                            ChartLegendItem(
+                                kind: .actualCurve,
+                                title: series.isBalanceSeries ? "余额曲线" : "实际剩余",
+                                compact: true
+                            )
                             if !series.idealSegments.isEmpty {
-                                Label("理想匀速", systemImage: "line.diagonal")
-                                    .foregroundStyle(.white.opacity(0.60))
+                                ChartLegendItem(
+                                    kind: .idealPace,
+                                    title: "理想匀速",
+                                    compact: true
+                                )
+                            }
+                            if !series.gaps.isEmpty {
+                                ChartLegendItem(
+                                    kind: .unrecordedGap,
+                                    title: "未记录",
+                                    compact: true
+                                )
                             }
                             Spacer()
                             if let proj = series.projectedExhaustionDate {
@@ -520,6 +533,7 @@ struct ProviderDetailPopoverView: View {
 
     private func miniTokenPreview(_ activity: TokenActivitySnapshot) -> some View {
         let bars = HistoryAnalytics.aggregateTokens(dailyBuckets: activity.dailyBuckets, range: .days30)
+        let domain = HistoryAnalytics.tokenDomain(for: .days30, bars: bars)
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -543,15 +557,23 @@ struct ProviderDetailPopoverView: View {
             if !bars.isEmpty {
                 Chart(bars) { item in
                     BarMark(
-                        x: .value("日期", item.bucketDate),
-                        y: .value("Token", item.tokens)
+                        x: .value("日期", item.bucketDate, unit: .day),
+                        y: .value("Token", item.tokens),
+                        width: .ratio(0.74)
                     )
-                    .foregroundStyle(CodexPalette.chartAccentBright.gradient)
-                    .cornerRadius(2)
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [CodexPalette.chartAccentBright, CodexPalette.chartAccent.opacity(0.80)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .cornerRadius(3)
                 }
+                .chartXScale(domain: domain)
                 .chartXAxis(.hidden)
                 .chartYAxis(.hidden)
-                .frame(height: 76)
+                .frame(height: 82)
             }
         }
         .contentShape(Rectangle())

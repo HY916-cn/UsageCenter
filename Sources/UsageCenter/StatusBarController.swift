@@ -643,7 +643,7 @@ final class CompositeStatusBarView: NSView {
 
         guard !slots.isEmpty else {
             let r = NSRect(x: bounds.midX - 7.5, y: bounds.midY - 7.5, width: 15, height: 15)
-            BrandIconRenderer.whiteIcon(for: .antigravity, size: 15).draw(in: r)
+            BrandIconRenderer.appMarkWhite(size: 15).draw(in: r)
             return
         }
 

@@ -464,6 +464,49 @@ public enum HistoryAnalytics {
             }
         }
     }
+
+    public static func tokenCalendarComponent(for range: TokenHistoryRange) -> Calendar.Component {
+        switch range {
+        case .days7, .days30, .days90: return .day
+        case .year1: return .weekOfYear
+        case .all: return .month
+        }
+    }
+
+    public static func tokenDomain(
+        for range: TokenHistoryRange,
+        bars: [AggregatedTokenBar],
+        now: Date = Date()
+    ) -> ClosedRange<Date> {
+        let cal = Calendar.current
+        let todayStart = cal.startOfDay(for: now)
+        switch range {
+        case .days7:
+            let start = cal.date(byAdding: .day, value: -6, to: todayStart) ?? todayStart
+            let end = cal.date(byAdding: .day, value: 1, to: todayStart) ?? now
+            return start...end
+        case .days30:
+            let start = cal.date(byAdding: .day, value: -29, to: todayStart) ?? todayStart
+            let end = cal.date(byAdding: .day, value: 1, to: todayStart) ?? now
+            return start...end
+        case .days90:
+            let start = cal.date(byAdding: .day, value: -89, to: todayStart) ?? todayStart
+            let end = cal.date(byAdding: .day, value: 1, to: todayStart) ?? now
+            return start...end
+        case .year1:
+            let curWeek = cal.dateInterval(of: .weekOfYear, for: todayStart)?.start ?? todayStart
+            let start = cal.date(byAdding: .weekOfYear, value: -51, to: curWeek) ?? curWeek
+            let end = cal.date(byAdding: .weekOfYear, value: 1, to: curWeek) ?? now
+            return start...end
+        case .all:
+            let curMonth = cal.dateInterval(of: .month, for: todayStart)?.start ?? todayStart
+            let minSixMonths = cal.date(byAdding: .month, value: -5, to: curMonth) ?? curMonth
+            let earliestBar = bars.first.flatMap { cal.dateInterval(of: .month, for: $0.bucketDate)?.start }
+            let start = earliestBar.map { min($0, minSixMonths) } ?? minSixMonths
+            let end = cal.date(byAdding: .month, value: 1, to: curMonth) ?? now
+            return start...end
+        }
+    }
 }
 
 // MARK: - Persistent History Store (Quota + Accumulated Daily Tokens)

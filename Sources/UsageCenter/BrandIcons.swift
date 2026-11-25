@@ -4,7 +4,60 @@ import UsageCenterCore
 
 public enum BrandIconRenderer {
     private static var baseSVGCache: [ProviderID: NSImage] = [:]
+    private static var cachedAppIcon: NSImage?
     private static let cacheLock = NSLock()
+
+    /// Loads UsageCenter's bundled AppIcon.icns.
+    public static func appIconImage() -> NSImage {
+        cacheLock.lock()
+        if let existing = cachedAppIcon {
+            cacheLock.unlock()
+            return existing
+        }
+        cacheLock.unlock()
+
+        let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
+            ?? Bundle.module.url(forResource: "AppIcon", withExtension: "icns")
+        let loaded = url.flatMap { NSImage(contentsOf: $0) }
+            ?? NSApplication.shared.applicationIconImage
+            ?? appMarkWhite(size: 64)
+
+        cacheLock.lock()
+        cachedAppIcon = loaded
+        cacheLock.unlock()
+        return loaded
+    }
+
+    /// Pure white monochrome UsageCenter emblem (concentric dual-arc + 4-point star) for status bar fallback.
+    public static func appMarkWhite(size: CGFloat = 15) -> NSImage {
+        let img = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            let c = NSPoint(x: rect.midX, y: rect.midY)
+            let outerR = size * 0.42
+            let innerR = size * 0.25
+
+            let outer = NSBezierPath()
+            outer.appendArc(withCenter: c, radius: outerR, startAngle: 90, endAngle: -205, clockwise: true)
+            outer.lineWidth = max(1.4, size * 0.11)
+            outer.lineCapStyle = .round
+            NSColor.white.setStroke()
+            outer.stroke()
+
+            let inner = NSBezierPath()
+            inner.appendArc(withCenter: c, radius: innerR, startAngle: 90, endAngle: -145, clockwise: true)
+            inner.lineWidth = max(1.1, size * 0.085)
+            inner.lineCapStyle = .round
+            NSColor.white.withAlphaComponent(0.85).setStroke()
+            inner.stroke()
+
+            let dotR = size * 0.08
+            let dot = NSBezierPath(ovalIn: NSRect(x: c.x - dotR, y: c.y - dotR, width: dotR * 2, height: dotR * 2))
+            NSColor.white.setFill()
+            dot.fill()
+            return true
+        }
+        img.isTemplate = false
+        return img
+    }
 
     /// Renders pure white (#FFFFFF) official SVG vector mark at crisp Retina resolution.
     public static func whiteIcon(for provider: ProviderID, size: CGFloat = 15) -> NSImage {
@@ -87,6 +140,23 @@ public struct BrandBadgeView: View {
 
     public var body: some View {
         Image(nsImage: BrandIconRenderer.whiteIcon(for: provider, size: size))
+            .renderingMode(.original)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: size, height: size)
+    }
+}
+
+public struct UsageCenterAppIconView: View {
+    public var size: CGFloat = 24
+
+    public init(size: CGFloat = 24) {
+        self.size = size
+    }
+
+    public var body: some View {
+        Image(nsImage: BrandIconRenderer.appIconImage())
             .renderingMode(.original)
             .resizable()
             .interpolation(.high)

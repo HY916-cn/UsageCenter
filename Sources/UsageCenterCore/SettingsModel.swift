@@ -86,7 +86,7 @@ public enum AntigravityGroupPreference: String, CaseIterable, Codable, Identifia
 
     public var localizedName: String {
         switch self {
-        case .auto: return "自动（最低剩余组）"
+        case .auto: return "自动（最低组）"
         case .gemini: return "Gemini 模型"
         case .thirdParty: return "Claude & GPT"
         }

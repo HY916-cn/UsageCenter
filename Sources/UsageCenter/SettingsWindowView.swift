@@ -40,12 +40,12 @@ struct SettingsWindowView: View {
 
     private var sidebarRail: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                BrandBadgeView(provider: .antigravity, size: 17)
+            HStack(spacing: 9) {
+                UsageCenterAppIconView(size: 24)
                 Text("UsageCenter")
                     .font(.headline)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
             .padding(.vertical, 10)
 
             ForEach(SettingsCategory.allCases) { category in
@@ -146,20 +146,27 @@ struct SettingsWindowView: View {
         }
 
         glassCard("菜单栏样式") {
-            settingPickerRow("默认样式", selection: $store.preferences.globalStyle) {
-                ForEach(SegmentDisplayStyle.allCases) { Text($0.localizedName).tag($0) }
-            }
-            settingPickerRow("百分比模式", selection: $store.preferences.percentMode) {
-                ForEach(QuotaPercentMode.allCases) { Text($0.localizedName).tag($0) }
-            }
-            settingPickerRow("下标内容", selection: $store.preferences.timeDisplayMode) {
-                ForEach(TimeDisplayMode.allCases) { Text($0.localizedName).tag($0) }
-            }
+            settingDropdownRow(
+                "默认样式",
+                selection: $store.preferences.globalStyle,
+                choices: SegmentDisplayStyle.allCases.map { DropdownChoice(title: $0.localizedName, value: $0) }
+            )
+            settingDropdownRow(
+                "百分比模式",
+                selection: $store.preferences.percentMode,
+                choices: QuotaPercentMode.allCases.map { DropdownChoice(title: $0.localizedName, value: $0) }
+            )
+            settingDropdownRow(
+                "下标内容",
+                selection: $store.preferences.timeDisplayMode,
+                choices: TimeDisplayMode.allCases.map { DropdownChoice(title: $0.localizedName, value: $0) }
+            )
             HStack(spacing: 24) {
                 Toggle("显示分隔竖线", isOn: $store.preferences.showsDividers)
                 Toggle("等宽数字", isOn: $store.preferences.monospacedDigits)
             }
             .font(.subheadline)
+            .padding(.top, 2)
         }
 
         glassCard("各部分显示与顺序") {
@@ -247,48 +254,58 @@ struct SettingsWindowView: View {
             }
 
             if section.isEnabled {
-                HStack(spacing: 12) {
-                    Picker("样式", selection: Binding<SegmentDisplayStyle?>(
-                        get: { section.styleOverride },
-                        set: { val in store.preferences.updateSection(provider) { $0.styleOverride = val } }
-                    )) {
-                        Text("跟随全局").tag(SegmentDisplayStyle?.none)
-                        ForEach(SegmentDisplayStyle.allCases) { s in
-                            Text(s.localizedName).tag(Optional(s))
-                        }
-                    }
-                    .controlSize(.small)
-                    .frame(maxWidth: 180)
+                let styleChoices: [DropdownChoice<SegmentDisplayStyle?>] =
+                    [DropdownChoice(title: "跟随全局", value: nil)]
+                    + SegmentDisplayStyle.allCases.map { DropdownChoice(title: $0.localizedName, value: Optional($0)) }
+
+                HStack(spacing: 14) {
+                    inlineSubControl(
+                        label: "样式",
+                        labelWidth: 28,
+                        dropdownWidth: 126,
+                        selection: Binding<SegmentDisplayStyle?>(
+                            get: { section.styleOverride },
+                            set: { val in store.preferences.updateSection(provider) { $0.styleOverride = val } }
+                        ),
+                        choices: styleChoices
+                    )
 
                     if provider.isQuotaProvider {
-                        Picker("窗口", selection: Binding(
-                            get: { section.windowVisibility },
-                            set: { val in store.preferences.updateSection(provider) { $0.windowVisibility = val } }
-                        )) {
-                            ForEach(WindowVisibilityMode.allCases) { m in
-                                Text(m.localizedName).tag(m)
-                            }
-                        }
-                        .controlSize(.small)
-                        .frame(maxWidth: 150)
+                        inlineSubControl(
+                            label: "窗口",
+                            labelWidth: 28,
+                            dropdownWidth: 108,
+                            selection: Binding(
+                                get: { section.windowVisibility },
+                                set: { val in store.preferences.updateSection(provider) { $0.windowVisibility = val } }
+                            ),
+                            choices: WindowVisibilityMode.allCases.map { DropdownChoice(title: $0.localizedName, value: $0) }
+                        )
                     } else {
-                        Picker("币种", selection: $store.preferences.deepSeekCurrencyPreference) {
-                            Text("自动").tag("AUTO")
-                            Text("CNY").tag("CNY")
-                            Text("USD").tag("USD")
-                        }
-                        .controlSize(.small)
-                        .frame(maxWidth: 130)
+                        inlineSubControl(
+                            label: "币种",
+                            labelWidth: 28,
+                            dropdownWidth: 108,
+                            selection: $store.preferences.deepSeekCurrencyPreference,
+                            choices: [
+                                DropdownChoice(title: "自动", value: "AUTO"),
+                                DropdownChoice(title: "CNY", value: "CNY"),
+                                DropdownChoice(title: "USD", value: "USD")
+                            ]
+                        )
                     }
 
                     if provider == .antigravity {
-                        Picker("模型组", selection: $store.preferences.antigravityGroup) {
-                            ForEach(AntigravityGroupPreference.allCases) { g in
-                                Text(g.localizedName).tag(g)
-                            }
-                        }
-                        .controlSize(.small)
+                        inlineSubControl(
+                            label: "模型组",
+                            labelWidth: 38,
+                            dropdownWidth: 126,
+                            selection: $store.preferences.antigravityGroup,
+                            choices: AntigravityGroupPreference.allCases.map { DropdownChoice(title: $0.localizedName, value: $0) }
+                        )
                     }
+
+                    Spacer(minLength: 0)
                 }
                 .padding(.leading, 25)
             }
@@ -398,13 +415,17 @@ struct SettingsWindowView: View {
 
     private var generalPage: some View {
         glassCard("刷新与启动") {
-            settingPickerRow("后台刷新频率", selection: $store.preferences.refreshIntervalSeconds) {
-                Text("30 秒").tag(30)
-                Text("60 秒（默认）").tag(60)
-                Text("2 分钟").tag(120)
-                Text("5 分钟").tag(300)
-                Text("仅手动").tag(0)
-            }
+            settingDropdownRow(
+                "后台刷新频率",
+                selection: $store.preferences.refreshIntervalSeconds,
+                choices: [
+                    DropdownChoice(title: "30 秒", value: 30),
+                    DropdownChoice(title: "60 秒（默认）", value: 60),
+                    DropdownChoice(title: "2 分钟", value: 120),
+                    DropdownChoice(title: "5 分钟", value: 300),
+                    DropdownChoice(title: "仅手动", value: 0)
+                ]
+            )
 
             Toggle("登录 macOS 时自动启动", isOn: Binding(
                 get: { store.launchAtLoginEnabled },
@@ -437,9 +458,11 @@ struct SettingsWindowView: View {
 
     private var historyPage: some View {
         glassCard("历史记录管理") {
-            settingPickerRow("保留周期", selection: $store.preferences.historyRetention) {
-                ForEach(HistoryRetentionPolicy.allCases) { Text($0.localizedName).tag($0) }
-            }
+            settingDropdownRow(
+                "保留周期",
+                selection: $store.preferences.historyRetention,
+                choices: HistoryRetentionPolicy.allCases.map { DropdownChoice(title: $0.localizedName, value: $0) }
+            )
 
             HStack {
                 Text("存储占用")
@@ -507,15 +530,10 @@ struct SettingsWindowView: View {
     private var aboutPage: some View {
         glassCard("关于 UsageCenter") {
             HStack(spacing: 14) {
-                if let appIcon = NSApplication.shared.applicationIconImage {
-                    Image(nsImage: appIcon)
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: 56, height: 56)
-                }
+                UsageCenterAppIconView(size: 56)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("UsageCenter 1.3.0")
+                    Text("UsageCenter 1.3.1")
                         .font(.title3.weight(.bold))
                     Text("Claude · ChatGPT · Antigravity · DeepSeek (DSH)")
                         .font(.caption)
@@ -542,21 +560,43 @@ struct SettingsWindowView: View {
         .liquidGlassSurface(cornerRadius: 20)
     }
 
-    private func settingPickerRow<SelectionValue: Hashable, Content: View>(
+    private func settingDropdownRow<SelectionValue: Hashable>(
         _ label: String,
         selection: Binding<SelectionValue>,
-        @ViewBuilder content: () -> Content
+        choices: [DropdownChoice<SelectionValue>]
     ) -> some View {
         HStack {
             Text(label)
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.85))
             Spacer()
-            Picker("", selection: selection) {
-                content()
-            }
-            .labelsHidden()
-            .frame(maxWidth: 230)
+            UniformDropdown(
+                selection: selection,
+                choices: choices,
+                width: 212,
+                height: 28
+            )
+        }
+    }
+
+    private func inlineSubControl<SelectionValue: Hashable>(
+        label: String,
+        labelWidth: CGFloat,
+        dropdownWidth: CGFloat,
+        selection: Binding<SelectionValue>,
+        choices: [DropdownChoice<SelectionValue>]
+    ) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.75))
+                .frame(width: labelWidth, alignment: .leading)
+            UniformDropdown(
+                selection: selection,
+                choices: choices,
+                width: dropdownWidth,
+                height: 25
+            )
         }
     }
 }

@@ -128,17 +128,18 @@ struct UsageHistoryWindowView: View {
                 Spacer()
 
                 if activeProvider != .deepseek, snapshot.windows.count > 1 {
-                    Picker("窗口", selection: Binding(
-                        get: { store.historyWindowID ?? store.defaultHistoryWindowID(for: activeProvider) },
-                        set: { store.historyWindowID = $0; store.hoveredQuotaPointID = nil }
-                    )) {
-                        ForEach(snapshot.windows) { win in
+                    UniformDropdown(
+                        selection: Binding(
+                            get: { store.historyWindowID ?? store.defaultHistoryWindowID(for: activeProvider) ?? "" },
+                            set: { store.historyWindowID = $0; store.hoveredQuotaPointID = nil }
+                        ),
+                        choices: snapshot.windows.map { win in
                             let label = win.groupName.map { "\($0) · \(win.title)" } ?? win.title
-                            Text(label).tag(Optional(win.id))
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 210)
+                            return DropdownChoice(title: label, value: win.id)
+                        },
+                        width: 216,
+                        height: 28
+                    )
                 }
             }
 
@@ -162,16 +163,22 @@ struct UsageHistoryWindowView: View {
                 interactiveQuotaChart(series: series)
                     .frame(height: 270)
 
-                HStack(spacing: 18) {
-                    Label("实际配额", systemImage: "waveform.path")
-                        .foregroundStyle(CodexPalette.chartAccentBright)
+                HStack(spacing: 20) {
+                    ChartLegendItem(
+                        kind: .actualCurve,
+                        title: series.isBalanceSeries ? "余额曲线" : "实际配额"
+                    )
                     if !series.idealSegments.isEmpty {
-                        Label("理想匀速线", systemImage: "line.diagonal")
-                            .foregroundStyle(.white.opacity(0.65))
+                        ChartLegendItem(
+                            kind: .idealPace,
+                            title: "理想匀速线"
+                        )
                     }
                     if !series.gaps.isEmpty {
-                        Label("未记录区间", systemImage: "rectangle.inset.filled")
-                            .foregroundStyle(.white.opacity(0.55))
+                        ChartLegendItem(
+                            kind: .unrecordedGap,
+                            title: "未记录区间"
+                        )
                     }
                     Spacer()
                     if let proj = series.projectedExhaustionDate {
@@ -486,21 +493,39 @@ struct UsageHistoryWindowView: View {
             }
 
             if !bars.isEmpty {
+                let calUnit = HistoryAnalytics.tokenCalendarComponent(for: store.tokenRange)
+                let domain = HistoryAnalytics.tokenDomain(for: store.tokenRange, bars: bars)
+                let barRatio: CGFloat = switch store.tokenRange {
+                case .days7: 0.46
+                case .days30: 0.72
+                case .days90: 0.76
+                case .year1: 0.72
+                case .all: 0.54
+                }
+
                 Chart(bars) { bar in
                     let isHovered = (bar.bucketDate == store.hoveredTokenDate)
+                    let dimOthers = (store.hoveredTokenDate != nil && !isHovered)
                     BarMark(
-                        x: .value("时间", bar.bucketDate),
-                        y: .value("Tokens", bar.tokens)
+                        x: .value("时间", bar.bucketDate, unit: calUnit),
+                        y: .value("Tokens", bar.tokens),
+                        width: .ratio(barRatio)
                     )
-                    .foregroundStyle(isHovered ? Color.white : CodexPalette.chartAccentBright)
-                    .cornerRadius(3)
+                    .foregroundStyle(
+                        isHovered
+                            ? LinearGradient(colors: [.white, CodexPalette.chartAccentBright], startPoint: .top, endPoint: .bottom)
+                            : LinearGradient(colors: [CodexPalette.chartAccentBright, CodexPalette.chartAccent.opacity(0.78)], startPoint: .top, endPoint: .bottom)
+                    )
+                    .opacity(dimOthers ? 0.42 : 1.0)
+                    .cornerRadius(4)
 
                     if isHovered {
-                        RuleMark(x: .value("选中", bar.bucketDate))
-                            .foregroundStyle(Color.white.opacity(0.45))
+                        RuleMark(x: .value("选中", bucketMidpoint(for: bar.bucketDate, unit: calUnit)))
+                            .foregroundStyle(Color.white.opacity(0.55))
                             .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     }
                 }
+                .chartXScale(domain: domain)
                 .chartYAxis {
                     AxisMarks(position: .leading) { val in
                         AxisGridLine().foregroundStyle(Color.white.opacity(0.12))
@@ -523,7 +548,9 @@ struct UsageHistoryWindowView: View {
                                     let origin = geo[proxy.plotFrame!].origin
                                     if let d: Date = proxy.value(atX: loc.x - origin.x) {
                                         let nearest = bars.min {
-                                            abs($0.bucketDate.timeIntervalSince(d)) < abs($1.bucketDate.timeIntervalSince(d))
+                                            let m1 = bucketMidpoint(for: $0.bucketDate, unit: calUnit)
+                                            let m2 = bucketMidpoint(for: $1.bucketDate, unit: calUnit)
+                                            return abs(m1.timeIntervalSince(d)) < abs(m2.timeIntervalSince(d))
                                         }
                                         store.hoveredTokenDate = nearest?.bucketDate
                                     }
@@ -533,7 +560,7 @@ struct UsageHistoryWindowView: View {
                             }
                     }
                 }
-                .frame(height: 220)
+                .frame(height: 224)
             }
         }
         .padding(22)
@@ -594,6 +621,11 @@ struct UsageHistoryWindowView: View {
     }
 
     // MARK: - Shared Helpers
+
+    private func bucketMidpoint(for date: Date, unit: Calendar.Component) -> Date {
+        guard let iv = Calendar.current.dateInterval(of: unit, for: date) else { return date }
+        return iv.start.addingTimeInterval(iv.duration / 2)
+    }
 
     private var rangeSubtitle: String {
         switch store.historyMode {
