@@ -24,13 +24,15 @@ struct UsageHistoryWindowView: View {
     }
 
     private var chartSeries: QuotaChartSeries? {
-        HistoryAnalytics.buildQuotaSeries(
+        let liveBal = snapshot.preferredBalance(currencyPreference: store.preferences.deepSeekCurrencyPreference)?.numericTotal
+        return HistoryAnalytics.buildQuotaSeries(
             samples: samples,
             mode: store.historyMode,
             calendarUnit: store.historyCalendarUnit,
             calendarOffset: store.historyCalendarOffset,
             activeWindow: activeWindow,
-            isBalance: activeProvider == .deepseek
+            isBalance: activeProvider == .deepseek,
+            liveBalance: liveBal
         )
     }
 

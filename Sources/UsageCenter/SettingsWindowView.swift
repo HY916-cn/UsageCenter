@@ -507,17 +507,15 @@ struct SettingsWindowView: View {
     private var aboutPage: some View {
         glassCard("关于 UsageCenter") {
             HStack(spacing: 14) {
-                HStack(spacing: 8) {
-                    BrandBadgeView(provider: .claude, size: 20)
-                    BrandBadgeView(provider: .chatgpt, size: 20)
-                    BrandBadgeView(provider: .antigravity, size: 20)
-                    BrandBadgeView(provider: .deepseek, size: 20)
+                if let appIcon = NSApplication.shared.applicationIconImage {
+                    Image(nsImage: appIcon)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 56, height: 56)
                 }
-                .padding(10)
-                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("UsageCenter 1.2.0")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("UsageCenter 1.3.0")
                         .font(.title3.weight(.bold))
                     Text("Claude · ChatGPT · Antigravity · DeepSeek (DSH)")
                         .font(.caption)

@@ -21,6 +21,9 @@ cp "${BIN_PATH}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 
 cp "${ROOT_DIR}/Sources/UsageCenter/Resources/Icons/"*.svg "${APP_BUNDLE}/Contents/Resources/Icons/"
+if [ -f "${ROOT_DIR}/Sources/UsageCenter/Resources/AppIcon.icns" ]; then
+    cp "${ROOT_DIR}/Sources/UsageCenter/Resources/AppIcon.icns" "${APP_BUNDLE}/Contents/Resources/AppIcon.icns"
+fi
 if [ -d "${BIN_DIR}/UsageCenter_UsageCenter.bundle" ]; then
     cp -R "${BIN_DIR}/UsageCenter_UsageCenter.bundle" "${APP_BUNDLE}/Contents/Resources/"
 fi
@@ -36,6 +39,10 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" <<'PLIST'
     <string>UsageCenter</string>
     <key>CFBundleIdentifier</key>
     <string>com.hy916.UsageCenter</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -45,9 +52,9 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.2.0</string>
+    <string>1.3.0</string>
     <key>CFBundleVersion</key>
-    <string>3</string>
+    <string>4</string>
     <key>LSMinimumSystemVersion</key>
     <string>26.0</string>
     <key>UIDesignRequiresCompatibility</key>

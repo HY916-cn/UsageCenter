@@ -16,7 +16,11 @@
   - **Antigravity**：`agy -p "/usage" --output-format json`
   - **DeepSeek**：自动读取 `~/.dsh/.credentials.yaml` 本地 DSH 登录账户余额与累计消耗
 
-## 编译与安装
+## 下载安装
+
+可前往 [GitHub Releases](https://github.com/HY916-cn/UsageCenter/releases) 直接下载最新打包好的 `UsageCenter-1.3.0.dmg` 或 `UsageCenter-1.3.0-macOS.zip`，将 `UsageCenter.app` 拖入 `/Applications` 即可运行。
+
+## 源码编译与安装
 
 ```bash
 ./Scripts/build_app.sh

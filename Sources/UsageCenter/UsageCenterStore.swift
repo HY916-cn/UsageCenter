@@ -67,6 +67,7 @@ final class UsageCenterStore: ObservableObject {
     // Detailed History Window State (CodexMeter parity)
     @Published var historyProvider: ProviderID = .chatgpt
     @Published var historyWindowID: String?
+    @Published var popoverHistoryWindowIDs: [ProviderID: String] = [:]
     @Published var historyMode: HistoryQueryMode = .currentCycle
     @Published var historyCalendarUnit: HistoryCalendarUnit = .week
     @Published var historyCalendarOffset: Int = 0
@@ -260,6 +261,15 @@ final class UsageCenterStore: ObservableObject {
         if let weekly = pair.weekly { return weekly.id }
         if let five = pair.fiveHour { return five.id }
         return snap.windows.first?.id ?? historySamples.last(where: { $0.provider == provider })?.windowID
+    }
+
+    func selectedPopoverHistoryWindowID(for provider: ProviderID) -> String? {
+        let snap = snapshot(for: provider)
+        if let chosen = popoverHistoryWindowIDs[provider],
+           snap.windows.isEmpty || snap.windows.contains(where: { $0.id == chosen }) {
+            return chosen
+        }
+        return defaultHistoryWindowID(for: provider)
     }
 
     func generateDemoHistory() {

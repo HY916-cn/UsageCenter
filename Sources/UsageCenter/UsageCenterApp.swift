@@ -139,6 +139,12 @@ final class UsageCenterAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
+        if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
+            ?? Bundle.main.url(forResource: "UsageCenter_UsageCenter", withExtension: "bundle")
+                .flatMap({ Bundle(url: $0)?.url(forResource: "AppIcon", withExtension: "icns") }),
+           let iconImage = NSImage(contentsOf: iconURL) {
+            NSApplication.shared.applicationIconImage = iconImage
+        }
         installMainMenuForShortcuts()
 
         let store = UsageCenterStore()
@@ -216,22 +222,87 @@ struct UsageCenterMain {
                 precondition(img.size.width == 16 && !img.representations.isEmpty, "Missing SVG for \(p)")
             }
 
-            // 2. Verify Slot Coordinate Resolution (No wrong-segment fallback)
-            let barView = MainActor.assumeIsolated {
-                let v = CompositeStatusBarView(frame: .zero)
-                _ = v.update(preferences: UsageCenterPreferences(), snapshots: [:], selectedProvider: nil)
-                return v
-            }
-            let slots = MainActor.assumeIsolated { barView.slots }
-            precondition(slots.count == 4, "Expected 4 enabled slots")
-            for slot in slots {
-                let resolved = MainActor.assumeIsolated { barView.resolveSlot(atLocalX: slot.frame.midX)?.provider }
-                precondition(resolved == slot.provider, "Slot hit mismatch for \(slot.provider)")
-            }
-            print("[OK] White SVG icons & 4-segment exact X-coordinate resolution verified")
+            // 2. Verify Slot Coordinate Resolution & Fixed Non-Moving Geometry Across Value Changes
+            let nowCheck = Date()
+            for style in SegmentDisplayStyle.allCases {
+                var prefs = UsageCenterPreferences()
+                prefs.globalStyle = style
 
-            // 3. Verify History Multi-Cycle & Token Aggregation Analytics
+                let loadingSnaps: [ProviderID: ProviderSnapshot] = Dictionary(uniqueKeysWithValues: ProviderID.allCases.map {
+                    ($0, ProviderSnapshot(provider: $0, isLoading: true))
+                })
+                let singleDigitSnaps: [ProviderID: ProviderSnapshot] = [
+                    .claude: ProviderSnapshot(provider: .claude, windows: [
+                        QuotaWindow(id: "c5", title: "5小时", kind: .fiveHour, usedPercent: 93, durationMinutes: 300, resetsAt: nowCheck.addingTimeInterval(1800)),
+                        QuotaWindow(id: "c7", title: "每周", kind: .weekly, usedPercent: 99, durationMinutes: 10_080, resetsAt: nowCheck.addingTimeInterval(86_400))
+                    ], isLoading: false),
+                    .chatgpt: ProviderSnapshot(provider: .chatgpt, windows: [
+                        QuotaWindow(id: "g5", title: "5小时", kind: .fiveHour, usedPercent: 95, durationMinutes: 300, resetsAt: nowCheck.addingTimeInterval(3600)),
+                        QuotaWindow(id: "g7", title: "每周", kind: .weekly, usedPercent: 91, durationMinutes: 10_080, resetsAt: nowCheck.addingTimeInterval(90_000))
+                    ], isLoading: false),
+                    .antigravity: ProviderSnapshot(provider: .antigravity, windows: [
+                        QuotaWindow(id: "a5", title: "5小时", kind: .fiveHour, usedPercent: 98, durationMinutes: 300, resetsAt: nowCheck.addingTimeInterval(600)),
+                        QuotaWindow(id: "a7", title: "每周", kind: .weekly, usedPercent: 96, durationMinutes: 10_080, resetsAt: nowCheck.addingTimeInterval(50_000))
+                    ], isLoading: false),
+                    .deepseek: ProviderSnapshot(provider: .deepseek, balances: [
+                        DeepSeekBalanceItem(currency: "CNY", totalBalance: "3.20", grantedBalance: "0.00", toppedUpBalance: "3.20")
+                    ], isAvailable: true, isLoading: false)
+                ]
+                let tripleDigitSnaps: [ProviderID: ProviderSnapshot] = [
+                    .claude: ProviderSnapshot(provider: .claude, windows: [
+                        QuotaWindow(id: "c5", title: "5小时", kind: .fiveHour, usedPercent: 0, durationMinutes: 300, resetsAt: nowCheck.addingTimeInterval(17_900)),
+                        QuotaWindow(id: "c7", title: "每周", kind: .weekly, usedPercent: 0, durationMinutes: 10_080, resetsAt: nowCheck.addingTimeInterval(600_000))
+                    ], isLoading: false),
+                    .chatgpt: ProviderSnapshot(provider: .chatgpt, windows: [
+                        QuotaWindow(id: "g5", title: "5小时", kind: .fiveHour, usedPercent: 0, durationMinutes: 300, resetsAt: nowCheck.addingTimeInterval(17_900)),
+                        QuotaWindow(id: "g7", title: "每周", kind: .weekly, usedPercent: 0, durationMinutes: 10_080, resetsAt: nowCheck.addingTimeInterval(600_000))
+                    ], isLoading: false),
+                    .antigravity: ProviderSnapshot(provider: .antigravity, windows: [
+                        QuotaWindow(id: "a5", title: "5小时", kind: .fiveHour, usedPercent: 0, durationMinutes: 300, resetsAt: nowCheck.addingTimeInterval(17_900)),
+                        QuotaWindow(id: "a7", title: "每周", kind: .weekly, usedPercent: 0, durationMinutes: 10_080, resetsAt: nowCheck.addingTimeInterval(600_000))
+                    ], isLoading: false),
+                    .deepseek: ProviderSnapshot(provider: .deepseek, balances: [
+                        DeepSeekBalanceItem(currency: "CNY", totalBalance: "1288.45", grantedBalance: "0.00", toppedUpBalance: "1288.45")
+                    ], isAvailable: true, isLoading: false)
+                ]
+
+                let framesLoading = MainActor.assumeIsolated { () -> [NSRect] in
+                    let v = CompositeStatusBarView(frame: .zero)
+                    _ = v.update(preferences: prefs, snapshots: loadingSnaps, selectedProvider: nil)
+                    return v.slots.map(\.frame)
+                }
+                let framesSingle = MainActor.assumeIsolated { () -> [NSRect] in
+                    let v = CompositeStatusBarView(frame: .zero)
+                    _ = v.update(preferences: prefs, snapshots: singleDigitSnaps, selectedProvider: nil)
+                    return v.slots.map(\.frame)
+                }
+                let framesTriple = MainActor.assumeIsolated { () -> [NSRect] in
+                    let v = CompositeStatusBarView(frame: .zero)
+                    _ = v.update(preferences: prefs, snapshots: tripleDigitSnaps, selectedProvider: nil)
+                    for slot in v.slots {
+                        let resolved = v.resolveSlot(atLocalX: slot.frame.midX)?.provider
+                        precondition(resolved == slot.provider, "Slot hit mismatch for \(slot.provider)")
+                    }
+                    return v.slots.map(\.frame)
+                }
+
+                precondition(framesLoading == framesSingle && framesSingle == framesTriple, "Slot frames shifted in style \(style)")
+            }
+            print("[OK] White SVG icons, fixed non-moving widths across all 6 styles, & exact X-coordinate resolution verified")
+
+            // 3. Verify History Multi-Cycle, Zero-Sample Live Cycle Synthesis, & Token Aggregation Analytics
             let now = Date()
+            let liveWin = QuotaWindow(id: "claude-week", title: "每周配额", kind: .weekly, usedPercent: 1, durationMinutes: 10_080, resetsAt: now.addingTimeInterval(3 * 86_400))
+            let singleCycleSeries = HistoryAnalytics.buildQuotaSeries(
+                samples: [],
+                mode: .currentCycle,
+                calendarUnit: .week,
+                calendarOffset: 0,
+                activeWindow: liveWin,
+                isBalance: false,
+                now: now
+            )
+            precondition(singleCycleSeries != nil && singleCycleSeries!.points.count >= 2, "Expected expanded inline history series from live window")
             let samplePts = [
                 QuotaHistoryPoint(provider: .chatgpt, windowID: "w", windowTitle: "周", durationMinutes: 10_080, timestamp: now.addingTimeInterval(-3600 * 10), remainingPercent: 90, resetsAt: now.addingTimeInterval(3600 * 50)),
                 QuotaHistoryPoint(provider: .chatgpt, windowID: "w", windowTitle: "周", durationMinutes: 10_080, timestamp: now, remainingPercent: 76, resetsAt: now.addingTimeInterval(3600 * 40))

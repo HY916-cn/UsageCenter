@@ -7,7 +7,13 @@ import UsageCenterCore
 enum StatusSegmentRenderer {
     static let barHeight: CGFloat = 22
 
+    enum UnitSlotKind {
+        case quota(showsDetailedTime: Bool)
+        case balance
+    }
+
     struct MetricUnit {
+        let slotKind: UnitSlotKind
         let primaryText: String
         let captionText: String
         let quotaPercent: Double?
@@ -27,6 +33,10 @@ enum StatusSegmentRenderer {
     private static let barHeightVal: CGFloat = 3.0
     private static let iconSize: CGFloat = 14.5
     private static let unitGap: CGFloat = 5.5
+    private static let fixedQuotaTextWidth: CGFloat = 32.0
+    private static let fixedQuotaDetailedTextWidth: CGFloat = 38.0
+    private static let fixedCompactBarColumnWidth: CGFloat = 34.0
+    private static let fixedBalanceTextWidth: CGFloat = 54.0
 
     static func buildLayout(
         config: ProviderSectionConfig,
@@ -35,20 +45,22 @@ enum StatusSegmentRenderer {
         now: Date = Date()
     ) -> SegmentLayout {
         let style = preferences.effectiveStyle(for: config.provider)
+        let showsDetailedTime = config.showsResetTimeInMenuBar && preferences.timeDisplayMode != .hidden
+        let quotaSlotKind: UnitSlotKind = .quota(showsDetailedTime: showsDetailedTime)
 
         if preferences.developerPreviewEnabled {
             if config.provider == .deepseek {
-                let unit = MetricUnit(primaryText: "¥36.44", captionText: "余额", quotaPercent: 72, timePercent: nil, attention: .normal)
-                let w = computeTotalWidth(units: [unit], style: .statsMini, monospaced: preferences.monospacedDigits)
+                let unit = MetricUnit(slotKind: .balance, primaryText: "¥36.44", captionText: "余额", quotaPercent: 72, timePercent: nil, attention: .normal)
+                let w = computeTotalWidth(units: [unit], style: .statsMini)
                 return SegmentLayout(units: [unit], style: .statsMini, size: NSSize(width: w, height: barHeight), isStale: false)
             }
             let q = Int(preferences.developerPreviewRemaining.rounded())
             let t = preferences.developerPreviewTimeRemaining
             let att: QuotaAttentionLevel = q < 20 ? .critical : (Double(q) < t ? .warning : .normal)
-            let u1 = MetricUnit(primaryText: "\(q)%", captionText: "5h", quotaPercent: Double(q), timePercent: t, attention: att)
-            let u2 = MetricUnit(primaryText: "\(max(0, q - 8))%", captionText: "7d", quotaPercent: Double(max(0, q - 8)), timePercent: min(100, t + 15), attention: att)
+            let u1 = MetricUnit(slotKind: quotaSlotKind, primaryText: "\(q)%", captionText: "5h", quotaPercent: Double(q), timePercent: t, attention: att)
+            let u2 = MetricUnit(slotKind: quotaSlotKind, primaryText: "\(max(0, q - 8))%", captionText: "7d", quotaPercent: Double(max(0, q - 8)), timePercent: min(100, t + 15), attention: att)
             let units = (config.windowVisibility == .both) ? [u1, u2] : [u1]
-            let w = computeTotalWidth(units: units, style: style, monospaced: preferences.monospacedDigits)
+            let w = computeTotalWidth(units: units, style: style)
             return SegmentLayout(units: units, style: style, size: NSSize(width: w, height: barHeight), isStale: false)
         }
 
@@ -68,13 +80,14 @@ enum StatusSegmentRenderer {
             }
 
             let unit = MetricUnit(
+                slotKind: .balance,
                 primaryText: mainText,
                 captionText: "余额",
                 quotaPercent: nil,
                 timePercent: nil,
                 attention: attention
             )
-            let width = computeTotalWidth(units: [unit], style: .statsMini, monospaced: preferences.monospacedDigits)
+            let width = computeTotalWidth(units: [unit], style: .statsMini)
             return SegmentLayout(
                 units: [unit],
                 style: .statsMini,
@@ -90,6 +103,7 @@ enum StatusSegmentRenderer {
         func makeUnit(window: QuotaWindow?, tag: String) -> MetricUnit {
             guard let window else {
                 return MetricUnit(
+                    slotKind: quotaSlotKind,
                     primaryText: snapshot.isLoading ? "…" : "--",
                     captionText: tag,
                     quotaPercent: nil,
@@ -110,6 +124,7 @@ enum StatusSegmentRenderer {
             }
 
             return MetricUnit(
+                slotKind: quotaSlotKind,
                 primaryText: "\(pct)%",
                 captionText: caption,
                 quotaPercent: Double(pct),
@@ -134,7 +149,7 @@ enum StatusSegmentRenderer {
             units = [makeUnit(window: pair.weekly, tag: "7d")]
         }
 
-        let width = computeTotalWidth(units: units, style: style, monospaced: preferences.monospacedDigits)
+        let width = computeTotalWidth(units: units, style: style)
         return SegmentLayout(
             units: units,
             style: style,
@@ -151,28 +166,37 @@ enum StatusSegmentRenderer {
 
     private static let captionFont: NSFont = .monospacedDigitSystemFont(ofSize: 6.8, weight: .medium)
 
-    private static func unitWidth(_ unit: MetricUnit, style: SegmentDisplayStyle, monospaced: Bool) -> CGFloat {
-        let pFont = primaryFont(monospaced: monospaced)
-        let pW = ceil((unit.primaryText as NSString).size(withAttributes: [.font: pFont]).width)
-        let cW = ceil((unit.captionText as NSString).size(withAttributes: [.font: captionFont]).width)
-        let textW = max(25, max(pW, cW) + 2)
+    /// Deterministic fixed column width per slot kind & style — never varies with live digit count.
+    private static func unitWidth(_ unit: MetricUnit, style: SegmentDisplayStyle) -> CGFloat {
+        let textW: CGFloat
+        switch unit.slotKind {
+        case .balance:
+            textW = fixedBalanceTextWidth
+        case .quota(let showsDetailedTime):
+            textW = showsDetailedTime ? fixedQuotaDetailedTextWidth : fixedQuotaTextWidth
+        }
 
         switch style {
         case .rings:
             return ringSize + 2.5 + textW
         case .horizontalBar, .dualBars:
             return barWidth + 3.0 + textW
-        case .compactBar, .statsMini:
+        case .compactBar:
+            if case .balance = unit.slotKind {
+                return fixedBalanceTextWidth
+            }
+            return fixedCompactBarColumnWidth
+        case .statsMini:
             return textW
         case .progressOnly:
             return ringSize
         }
     }
 
-    private static func computeTotalWidth(units: [MetricUnit], style: SegmentDisplayStyle, monospaced: Bool) -> CGFloat {
+    private static func computeTotalWidth(units: [MetricUnit], style: SegmentDisplayStyle) -> CGFloat {
         let hPad: CGFloat = 9
         let iconAndGap: CGFloat = iconSize + 4.5
-        let unitsSum = units.map { unitWidth($0, style: style, monospaced: monospaced) }.reduce(0, +)
+        let unitsSum = units.map { unitWidth($0, style: style) }.reduce(0, +)
         let gaps = CGFloat(max(0, units.count - 1)) * unitGap
         return ceil(hPad + iconAndGap + unitsSum + gaps)
     }
@@ -206,7 +230,7 @@ enum StatusSegmentRenderer {
         let captionTextColor: NSColor = NSColor.white.withAlphaComponent(0.76)
 
         for (idx, unit) in layout.units.enumerated() {
-            let uWidth = unitWidth(unit, style: layout.style, monospaced: preferences.monospacedDigits)
+            let uWidth = unitWidth(unit, style: layout.style)
             let quotaColor = CodexPalette.quotaNSColor(for: unit.attention)
 
             switch layout.style {
@@ -262,6 +286,7 @@ enum StatusSegmentRenderer {
                 )
 
             case .compactBar:
+                let fixedBarW = uWidth - 2.0
                 drawText(
                     unit.primaryText,
                     in: NSRect(x: x, y: 6.5, width: uWidth, height: 13),
@@ -270,7 +295,7 @@ enum StatusSegmentRenderer {
                     alignment: .center
                 )
                 drawPillBar(
-                    in: NSRect(x: x + 1, y: 2.0, width: max(12, uWidth - 2), height: barHeightVal),
+                    in: NSRect(x: x + 1.0, y: 2.0, width: fixedBarW, height: barHeightVal),
                     percent: unit.quotaPercent,
                     color: quotaColor
                 )
@@ -649,31 +674,61 @@ final class CompositeStatusBarView: NSView {
 
 @MainActor
 final class LiquidGlassPopupPanel: NSPanel {
+    private static let cornerRadius: CGFloat = 20
+    private static let horizontalShadowPad: CGFloat = 18
+    private static let bottomShadowPad: CGFloat = 22
+    private static let topShadowPad: CGFloat = 6
+
+    private let outerContainer = NSView()
+    private let shadowCasterLayer = CALayer()
+    private let shadowCutoutMask = CAShapeLayer()
     private let glassContainer = NSGlassEffectView()
     private var hostingView: NSHostingView<ProviderDetailPopoverView>?
 
     init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 376, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 416, height: 480),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         self.isOpaque = false
         self.backgroundColor = .clear
-        self.hasShadow = true
+        // Disable WindowServer's rectangular/.darkAqua 1px black border rim;
+        // render a clean masked continuous-squircle shadow outside glassContainer instead.
+        self.hasShadow = false
         self.level = .statusBar
         self.collectionBehavior = [.transient, .moveToActiveSpace, .ignoresCycle]
         self.hidesOnDeactivate = false
         self.appearance = NSAppearance(named: .darkAqua)
 
-        glassContainer.cornerRadius = 20
+        outerContainer.wantsLayer = true
+        outerContainer.layer?.backgroundColor = NSColor.clear.cgColor
+        outerContainer.layer?.masksToBounds = false
+
+        shadowCasterLayer.backgroundColor = NSColor.clear.cgColor
+        shadowCasterLayer.shadowColor = NSColor.black.cgColor
+        shadowCasterLayer.shadowOpacity = 0.28
+        shadowCasterLayer.shadowRadius = 11
+        shadowCasterLayer.shadowOffset = CGSize(width: 0, height: -4)
+        shadowCutoutMask.fillRule = .evenOdd
+        shadowCasterLayer.mask = shadowCutoutMask
+        outerContainer.layer?.addSublayer(shadowCasterLayer)
+
+        glassContainer.cornerRadius = Self.cornerRadius
         glassContainer.style = .regular
         glassContainer.appearance = NSAppearance(named: .darkAqua)
-        self.contentView = glassContainer
+        outerContainer.addSubview(glassContainer)
+
+        self.contentView = outerContainer
     }
 
     override var canBecomeKey: Bool { true }
+
+    var cardScreenRect: NSRect {
+        let local = glassContainer.frame
+        return convertToScreen(local)
+    }
 
     func present(
         rootView: ProviderDetailPopoverView,
@@ -686,48 +741,82 @@ final class LiquidGlassPopupPanel: NSPanel {
         } else {
             let created = NSHostingView(rootView: rootView)
             created.sizingOptions = [.intrinsicContentSize]
+            created.wantsLayer = true
+            created.layer?.backgroundColor = NSColor.clear.cgColor
+            created.layer?.cornerRadius = Self.cornerRadius
+            created.layer?.cornerCurve = .continuous
+            created.layer?.masksToBounds = true
             glassContainer.contentView = created
             hostingView = created
             host = created
         }
 
-        host.layoutSubtreeIfNeeded()
-        let fitting = host.fittingSize
-        let panelWidth: CGFloat = max(376, ceil(fitting.width))
-        let panelHeight: CGFloat = max(180, ceil(fitting.height))
-
-        let screen = NSScreen.screens.first { $0.frame.intersects(anchorRect) } ?? NSScreen.main
-        let visibleFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-
-        var originX = round(anchorRect.midX - panelWidth / 2)
-        originX = min(max(visibleFrame.minX + 8, originX), visibleFrame.maxX - panelWidth - 8)
-        let originY = round(anchorRect.minY - panelHeight - 6)
-
-        let targetFrame = NSRect(x: originX, y: originY, width: panelWidth, height: panelHeight)
-        glassContainer.frame = NSRect(origin: .zero, size: targetFrame.size)
-        host.frame = glassContainer.bounds
-
-        setFrame(targetFrame, display: true)
+        layoutAndPosition(host: host, belowScreenRect: anchorRect, forceApply: true)
         makeKeyAndOrderFront(nil)
     }
 
     func resizeToFitCurrentContent(belowScreenRect anchorRect: NSRect) {
         guard isVisible, let host = hostingView else { return }
+        layoutAndPosition(host: host, belowScreenRect: anchorRect, forceApply: false)
+    }
+
+    private func layoutAndPosition(
+        host: NSHostingView<ProviderDetailPopoverView>,
+        belowScreenRect anchorRect: NSRect,
+        forceApply: Bool
+    ) {
         host.layoutSubtreeIfNeeded()
         let fitting = host.fittingSize
-        let panelWidth: CGFloat = max(376, ceil(fitting.width))
-        let panelHeight: CGFloat = max(180, ceil(fitting.height))
-        guard abs(frame.height - panelHeight) > 1 || abs(frame.midX - anchorRect.midX) > 2 else { return }
+        let cardWidth: CGFloat = max(384, ceil(fitting.width))
+        let cardHeight: CGFloat = max(180, ceil(fitting.height))
+
+        let panelWidth = cardWidth + Self.horizontalShadowPad * 2
+        let panelHeight = cardHeight + Self.bottomShadowPad + Self.topShadowPad
+
+        if !forceApply,
+           abs(frame.height - panelHeight) <= 1,
+           abs(frame.width - panelWidth) <= 1,
+           abs(frame.midX - anchorRect.midX) <= 2 {
+            return
+        }
 
         let screen = NSScreen.screens.first { $0.frame.intersects(anchorRect) } ?? NSScreen.main
         let visibleFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        var originX = round(anchorRect.midX - panelWidth / 2)
-        originX = min(max(visibleFrame.minX + 8, originX), visibleFrame.maxX - panelWidth - 8)
-        let originY = round(anchorRect.minY - panelHeight - 6)
 
-        let targetFrame = NSRect(x: originX, y: originY, width: panelWidth, height: panelHeight)
-        glassContainer.frame = NSRect(origin: .zero, size: targetFrame.size)
+        var cardOriginX = round(anchorRect.midX - cardWidth / 2)
+        cardOriginX = min(max(visibleFrame.minX + 8, cardOriginX), visibleFrame.maxX - cardWidth - 8)
+        let panelOriginX = cardOriginX - Self.horizontalShadowPad
+        let panelOriginY = round(anchorRect.minY - panelHeight)
+
+        let targetFrame = NSRect(x: panelOriginX, y: panelOriginY, width: panelWidth, height: panelHeight)
+        let cardFrame = NSRect(
+            x: Self.horizontalShadowPad,
+            y: Self.bottomShadowPad,
+            width: cardWidth,
+            height: cardHeight
+        )
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        outerContainer.frame = NSRect(origin: .zero, size: targetFrame.size)
+        glassContainer.frame = cardFrame
         host.frame = glassContainer.bounds
+
+        shadowCasterLayer.frame = outerContainer.bounds
+        let cardSquircle = NSBezierPath(
+            roundedRect: cardFrame,
+            xRadius: Self.cornerRadius,
+            yRadius: Self.cornerRadius
+        )
+        shadowCasterLayer.shadowPath = cardSquircle.cgPath
+
+        let cutout = CGMutablePath()
+        cutout.addRect(outerContainer.bounds)
+        cutout.addPath(cardSquircle.cgPath)
+        shadowCutoutMask.frame = outerContainer.bounds
+        shadowCutoutMask.path = cutout
+        CATransaction.commit()
+
         setFrame(targetFrame, display: true)
     }
 }
@@ -892,7 +981,7 @@ final class StatusBarController: NSObject {
             Task { @MainActor [weak self] in
                 guard let self, self.popupPanel.isVisible else { return }
                 let mouse = NSEvent.mouseLocation
-                if self.popupPanel.frame.contains(mouse) { return }
+                if self.popupPanel.cardScreenRect.contains(mouse) { return }
                 if let btn = self.statusItem.button,
                    let win = btn.window,
                    win.convertToScreen(btn.convert(btn.bounds, to: nil)).contains(mouse) {

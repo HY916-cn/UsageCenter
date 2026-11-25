@@ -22,7 +22,8 @@ let package = Package(
             dependencies: ["UsageCenterCore"],
             path: "Sources/UsageCenter",
             resources: [
-                .copy("Resources/Icons")
+                .copy("Resources/Icons"),
+                .copy("Resources/AppIcon.icns")
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

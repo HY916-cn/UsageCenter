@@ -150,6 +150,7 @@ public enum HistoryAnalytics {
         calendarOffset: Int,
         activeWindow: QuotaWindow?,
         isBalance: Bool,
+        liveBalance: Double? = nil,
         now: Date = Date()
     ) -> QuotaChartSeries? {
         let interval: DateInterval
@@ -160,6 +161,8 @@ public enum HistoryAnalytics {
             if !isBalance, let reset = activeWindow?.resetsAt, reset > now {
                 let start = reset.addingTimeInterval(-durationSecs)
                 interval = DateInterval(start: start, end: reset)
+            } else if !isBalance {
+                interval = DateInterval(start: now.addingTimeInterval(-durationSecs), end: now)
             } else {
                 interval = DateInterval(start: now.addingTimeInterval(-7 * 86_400), end: now)
             }
@@ -173,20 +176,67 @@ public enum HistoryAnalytics {
             interval = calendarUnit.interval(offset: calendarOffset, now: now)
         }
 
-        let inRange = samples
+        var inRange = samples
             .filter { $0.timestamp >= interval.start && $0.timestamp <= interval.end }
             .sorted { $0.timestamp < $1.timestamp }
+
+        // Ensure current live state is always represented so inline history charts render immediately
+        if mode != .browse {
+            if isBalance, let bal = liveBalance {
+                let shouldAppend = inRange.last.map {
+                    abs(($0.balanceAmount ?? -1) - bal) >= 0.001 || now.timeIntervalSince($0.timestamp) > 5
+                } ?? true
+                if shouldAppend {
+                    inRange.append(QuotaHistoryPoint(
+                        provider: .deepseek,
+                        windowID: "deepseek-live",
+                        windowTitle: "当前余额",
+                        timestamp: now,
+                        balanceAmount: bal
+                    ))
+                }
+            } else if !isBalance, let win = activeWindow {
+                let sampleTime = min(now, interval.end)
+                if sampleTime >= interval.start {
+                    let shouldAppend = inRange.last.map {
+                        $0.remainingPercent != win.remainingPercent || sampleTime.timeIntervalSince($0.timestamp) > 5
+                    } ?? true
+                    if shouldAppend {
+                        inRange.append(QuotaHistoryPoint(
+                            provider: .chatgpt,
+                            windowID: win.id,
+                            windowTitle: win.title,
+                            durationMinutes: win.durationMinutes,
+                            timestamp: sampleTime,
+                            remainingPercent: win.remainingPercent,
+                            resetsAt: win.resetsAt
+                        ))
+                    }
+                }
+            }
+        }
 
         guard !inRange.isEmpty else { return nil }
 
         if isBalance {
-            let plotted = inRange.map {
+            var plotted = inRange.map {
                 QuotaChartSeries.PlottedPoint(
                     id: $0.id.uuidString,
                     cycleID: "balance",
                     date: $0.timestamp,
                     value: $0.balanceAmount ?? 0
                 )
+            }
+            if plotted.count == 1, let only = plotted.first {
+                let anchorDate = max(interval.start, only.date.addingTimeInterval(-24 * 3600))
+                if only.date > anchorDate {
+                    plotted.insert(QuotaChartSeries.PlottedPoint(
+                        id: "balance-baseline",
+                        cycleID: "balance",
+                        date: anchorDate,
+                        value: only.value
+                    ), at: 0)
+                }
             }
             return QuotaChartSeries(
                 domain: interval.start...max(interval.end, plotted.last?.date ?? interval.end),
@@ -207,20 +257,23 @@ public enum HistoryAnalytics {
         var ideals: [QuotaChartSeries.IdealSegment] = []
         var observedDrop = 0
         var hasGap = false
+        var gapDates: [Date] = []
 
-        // Synthetic 100% start anchor in currentCycle mode if cycle began cleanly
+        // Every active quota cycle begins at 100% at cycleStart (resetsAt - duration)
         if mode == .currentCycle, let first = inRange.first {
-            if first.timestamp.timeIntervalSince(interval.start) <= 3600 || first.remainingPercent == 100 {
+            if first.timestamp > interval.start.addingTimeInterval(1) {
                 plotted.append(QuotaChartSeries.PlottedPoint(
                     id: "synthetic-start-0",
                     cycleID: "cycle-0",
                     date: interval.start,
                     value: 100
                 ))
-                observedDrop += max(0, 100 - first.remainingPercent)
-            } else {
-                hasGap = true
+                gapDates.append(interval.start)
+                if first.timestamp.timeIntervalSince(interval.start) > 45 * 60 && first.remainingPercent < 100 {
+                    hasGap = true
+                }
             }
+            observedDrop += max(0, 100 - first.remainingPercent)
             ideals.append(QuotaChartSeries.IdealSegment(
                 id: "ideal-0",
                 start: interval.start,
@@ -228,6 +281,16 @@ public enum HistoryAnalytics {
                 startValue: 100,
                 endValue: 0
             ))
+        } else if plotted.isEmpty, inRange.count == 1, let only = inRange.first {
+            let anchorDate = max(interval.start, only.timestamp.addingTimeInterval(-min(durationSecs, 6 * 3600)))
+            if only.timestamp > anchorDate {
+                plotted.append(QuotaChartSeries.PlottedPoint(
+                    id: "synthetic-single-anchor",
+                    cycleID: "cycle-0",
+                    date: anchorDate,
+                    value: Double(only.remainingPercent)
+                ))
+            }
         }
 
         for (i, sample) in inRange.enumerated() {
@@ -313,7 +376,8 @@ public enum HistoryAnalytics {
             }
         }
 
-        let gaps = computeGaps(dates: inRange.map(\.timestamp))
+        gapDates.append(contentsOf: inRange.map(\.timestamp))
+        let gaps = computeGaps(dates: gapDates)
         return QuotaChartSeries(
             domain: interval.start...interval.end,
             points: plotted,

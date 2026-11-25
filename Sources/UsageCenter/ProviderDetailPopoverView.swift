@@ -44,8 +44,13 @@ struct ProviderDetailPopoverView: View {
             footerRow
         }
         .padding(16)
-        .frame(width: 376)
+        .frame(width: 384)
         .fixedSize(horizontal: false, vertical: true)
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.9)
+                .allowsHitTesting(false)
+        }
         .applyDarkLiquidGlassTheme()
         .id(provider)
         .onAppear {
@@ -79,19 +84,21 @@ struct ProviderDetailPopoverView: View {
 
             Spacer()
 
-            if store.isRefreshing(provider) {
-                ProgressView()
-                    .controlSize(.small)
-            }
-
             Button {
                 Task { await store.refresh(provider: provider) }
             } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
+                ZStack {
+                    if store.isRefreshing(provider) {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.85))
+                    }
+                }
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(store.isRefreshing(provider))
@@ -148,12 +155,7 @@ struct ProviderDetailPopoverView: View {
                             quotaWindowsView
                         }
                     case .quotaHistory:
-                        Button {
-                            onOpenHistory(provider)
-                        } label: {
-                            miniHistoryPreview
-                        }
-                        .buttonStyle(.plain)
+                        inlineHistorySection
                     case .tokenActivity:
                         if let tokens = store.effectiveTokenActivity(), provider == .chatgpt {
                             Button {
@@ -260,106 +262,260 @@ struct ProviderDetailPopoverView: View {
         .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    // MARK: - Mini History & Token Previews
+    // MARK: - Expanded Inline Quota / Balance History
 
-    private var miniHistoryPreview: some View {
-        let samples = store.windowSamples(for: provider, windowID: nil)
-        let activeWin = store.activeWindowObject(for: provider, windowID: nil)
+    private var inlineHistorySection: some View {
+        let selectedWinID = store.selectedPopoverHistoryWindowID(for: provider)
+        let samples = store.windowSamples(for: provider, windowID: selectedWinID)
+        let activeWin = store.activeWindowObject(for: provider, windowID: selectedWinID)
+        let liveBal = snapshot.preferredBalance(currencyPreference: store.preferences.deepSeekCurrencyPreference)?.numericTotal
         let series = HistoryAnalytics.buildQuotaSeries(
             samples: samples,
             mode: .currentCycle,
             calendarUnit: .week,
             calendarOffset: 0,
             activeWindow: activeWin,
-            isBalance: provider == .deepseek
+            isBalance: provider == .deepseek,
+            liveBalance: liveBal
         )
 
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                VStack(alignment: .leading, spacing: 1) {
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(provider == .deepseek ? "余额历史" : "配额历史")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
-                    Text("当前周期")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.65))
+                    Text(inlineHistorySubtitle(series: series, activeWindow: activeWin))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.68))
                 }
+
                 Spacer()
-                if provider == .deepseek, let bal = snapshot.preferredBalance(currencyPreference: store.preferences.deepSeekCurrencyPreference) {
-                    Text(bal.formattedTotal)
-                        .font(.subheadline.weight(.bold).monospacedDigit())
-                        .foregroundStyle(.white)
-                } else if let w = activeWin {
-                    Text("\(w.displayPercent(mode: store.preferences.percentMode))%")
-                        .font(.subheadline.weight(.bold).monospacedDigit())
-                        .foregroundStyle(.white)
+
+                if provider != .deepseek, snapshot.windows.count > 1 {
+                    HStack(spacing: 3) {
+                        ForEach(snapshot.windows.prefix(3)) { win in
+                            let isSel = (win.id == activeWin?.id)
+                            Button {
+                                store.popoverHistoryWindowIDs[provider] = win.id
+                            } label: {
+                                Text(shortWindowPillTitle(win))
+                                    .font(.system(size: 10.5, weight: isSel ? .semibold : .regular))
+                                    .foregroundStyle(isSel ? .white : .white.opacity(0.68))
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background {
+                                        if isSel {
+                                            Capsule().fill(CodexPalette.chartAccent.opacity(0.32))
+                                        }
+                                    }
+                                    .contentShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(2)
+                    .background(Color.white.opacity(0.08), in: Capsule())
                 }
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.65))
+
+                Button {
+                    if let wid = activeWin?.id {
+                        store.historyWindowID = wid
+                    }
+                    onOpenHistory(provider)
+                } label: {
+                    HStack(spacing: 3) {
+                        Text("全部")
+                            .font(.caption2.weight(.medium))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(.white.opacity(0.75))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(Color.white.opacity(0.08), in: Capsule())
+                }
+                .buttonStyle(.plain)
             }
 
-            if let series, series.points.count >= 2 {
-                Chart {
-                    ForEach(series.idealSegments) { seg in
-                        LineMark(
-                            x: .value("时间", seg.start),
-                            y: .value("理想", seg.startValue),
-                            series: .value("理想线", seg.id)
-                        )
-                        .foregroundStyle(.white.opacity(0.32))
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
-
-                        LineMark(
-                            x: .value("时间", seg.end),
-                            y: .value("理想", seg.endValue),
-                            series: .value("理想线", seg.id)
-                        )
-                        .foregroundStyle(.white.opacity(0.32))
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+            if let series, !series.points.isEmpty {
+                Button {
+                    if let wid = activeWin?.id {
+                        store.historyWindowID = wid
                     }
+                    onOpenHistory(provider)
+                } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Chart {
+                            ForEach(series.gaps) { gap in
+                                RectangleMark(
+                                    xStart: .value("起点", gap.start),
+                                    xEnd: .value("终点", gap.end),
+                                    yStart: .value("下界", 0),
+                                    yEnd: .value("上界", series.isBalanceSeries ? max(10, (series.points.map(\.value).max() ?? 50) * 1.15) : 100)
+                                )
+                                .foregroundStyle(Color.white.opacity(0.06))
+                            }
 
-                    ForEach(series.points) { pt in
-                        AreaMark(
-                            x: .value("时间", pt.date),
-                            y: .value("配额", pt.value),
-                            series: .value("周期", pt.cycleID)
-                        )
-                        .interpolationMethod(.monotone)
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [CodexPalette.chartAccent.opacity(0.26), .clear],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
+                            ForEach(series.idealSegments) { seg in
+                                LineMark(
+                                    x: .value("时间", seg.start),
+                                    y: .value("理想", seg.startValue),
+                                    series: .value("理想线", seg.id)
+                                )
+                                .foregroundStyle(.white.opacity(0.38))
+                                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
 
-                        LineMark(
-                            x: .value("时间", pt.date),
-                            y: .value("配额", pt.value),
-                            series: .value("周期线", pt.cycleID)
+                                LineMark(
+                                    x: .value("时间", seg.end),
+                                    y: .value("理想", seg.endValue),
+                                    series: .value("理想线", seg.id)
+                                )
+                                .foregroundStyle(.white.opacity(0.38))
+                                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                            }
+
+                            ForEach(series.points) { pt in
+                                AreaMark(
+                                    x: .value("时间", pt.date),
+                                    y: .value("配额", pt.value),
+                                    series: .value("周期面", pt.cycleID)
+                                )
+                                .interpolationMethod(.monotone)
+                                .foregroundStyle(
+                                    LinearGradient(
+                                        colors: [CodexPalette.chartAccent.opacity(0.28), .clear],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
+
+                                LineMark(
+                                    x: .value("时间", pt.date),
+                                    y: .value("配额", pt.value),
+                                    series: .value("周期线", pt.cycleID)
+                                )
+                                .interpolationMethod(.monotone)
+                                .foregroundStyle(CodexPalette.chartAccentBright)
+                                .lineStyle(StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                            }
+
+                            if let latest = series.points.last {
+                                PointMark(
+                                    x: .value("时间", latest.date),
+                                    y: .value("配额", latest.value)
+                                )
+                                .foregroundStyle(CodexPalette.chartAccentBright)
+                                .symbolSize(34)
+                            }
+                        }
+                        .chartXScale(domain: series.domain)
+                        .chartYScale(domain: series.isBalanceSeries
+                            ? 0...max(10, (series.points.map(\.value).max() ?? 50) * 1.15)
+                            : 0...100
                         )
-                        .interpolationMethod(.monotone)
-                        .foregroundStyle(CodexPalette.chartAccentBright)
-                        .lineStyle(StrokeStyle(lineWidth: 1.4))
+                        .chartYAxis {
+                            if series.isBalanceSeries {
+                                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { val in
+                                    AxisGridLine().foregroundStyle(Color.white.opacity(0.10))
+                                    AxisValueLabel {
+                                        if let num = val.as(Double.self) {
+                                            Text(String(format: "¥%.0f", num))
+                                                .font(.system(size: 9).monospacedDigit())
+                                                .foregroundStyle(.white.opacity(0.56))
+                                        }
+                                    }
+                                }
+                            } else {
+                                AxisMarks(position: .leading, values: [0, 50, 100]) { val in
+                                    AxisGridLine().foregroundStyle(Color.white.opacity(0.10))
+                                    AxisValueLabel {
+                                        if let pct = val.as(Double.self) {
+                                            Text("\(Int(pct))%")
+                                                .font(.system(size: 9).monospacedDigit())
+                                                .foregroundStyle(.white.opacity(0.56))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .chartXAxis {
+                            AxisMarks(values: .automatic(desiredCount: 4)) { val in
+                                AxisGridLine().foregroundStyle(Color.white.opacity(0.08))
+                                AxisValueLabel {
+                                    if let d = val.as(Date.self) {
+                                        Text(inlineAxisDateLabel(d, window: activeWin))
+                                            .font(.system(size: 9).monospacedDigit())
+                                            .foregroundStyle(.white.opacity(0.56))
+                                    }
+                                }
+                            }
+                        }
+                        .frame(height: 118)
+
+                        HStack(spacing: 12) {
+                            Label(series.isBalanceSeries ? "余额曲线" : "实际剩余", systemImage: "waveform.path")
+                                .foregroundStyle(CodexPalette.chartAccentBright)
+                            if !series.idealSegments.isEmpty {
+                                Label("理想匀速", systemImage: "line.diagonal")
+                                    .foregroundStyle(.white.opacity(0.60))
+                            }
+                            Spacer()
+                            if let proj = series.projectedExhaustionDate {
+                                Text("预计 \(TimeFormatting.fullDateTime(proj)) 耗尽")
+                                    .foregroundStyle(CodexPalette.warningYellow)
+                            } else if let remProj = series.projectedRemainingAtReset {
+                                Text("预计重置余 \(remProj)%")
+                                    .foregroundStyle(.white.opacity(0.66))
+                            }
+                        }
+                        .font(.system(size: 10).monospacedDigit())
                     }
+                    .contentShape(Rectangle())
                 }
-                .chartXScale(domain: series.domain)
-                .chartXAxis(.hidden)
-                .chartYAxis(.hidden)
-                .frame(height: 82)
-            } else {
-                HStack(spacing: 6) {
-                    Image(systemName: "chart.xyaxis.line")
-                        .foregroundStyle(CodexPalette.chartAccentBright)
-                    Text("点击查看详细历史分析")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.70))
-                }
-                .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+                .buttonStyle(.plain)
             }
         }
-        .contentShape(Rectangle())
+    }
+
+    private func inlineHistorySubtitle(series: QuotaChartSeries?, activeWindow: QuotaWindow?) -> String {
+        if provider == .deepseek {
+            if let bal = snapshot.preferredBalance(currencyPreference: store.preferences.deepSeekCurrencyPreference) {
+                return "近 7 天 · 当前 \(bal.formattedTotal)"
+            }
+            return "近 7 天轨迹"
+        }
+        let winLabel = activeWindow?.title ?? "当前周期"
+        if let series {
+            let prefix = series.isLowerBoundConsumption ? "≥" : ""
+            return "\(winLabel) · 已消耗 \(prefix)\(series.observedConsumedPercent)%"
+        }
+        return winLabel
+    }
+
+    private func shortWindowPillTitle(_ win: QuotaWindow) -> String {
+        if let grp = win.groupName, !grp.isEmpty {
+            let short = grp
+                .replacingOccurrences(of: " models", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: "Claude / GPT-OSS", with: "Claude")
+            return win.kind == .fiveHour ? "\(short) 5h" : "\(short) 7d"
+        }
+        switch win.kind {
+        case .fiveHour: return "5h"
+        case .weekly: return "7d"
+        case .other: return win.title
+        }
+    }
+
+    private func inlineAxisDateLabel(_ date: Date, window: QuotaWindow?) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        if (window?.durationMinutes ?? 10_080) <= 360 {
+            f.dateFormat = "HH:mm"
+        } else {
+            f.dateFormat = "MM/dd"
+        }
+        return f.string(from: date)
     }
 
     private func miniTokenPreview(_ activity: TokenActivitySnapshot) -> some View {
@@ -548,6 +704,7 @@ private struct LuminousBar: View {
                     Spacer()
                     Text(valueText)
                         .monospacedDigit()
+                        .frame(minWidth: 38, alignment: .trailing)
                 }
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.88))
