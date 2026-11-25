@@ -288,7 +288,7 @@ struct UsageCenterMain {
 
                 precondition(framesLoading == framesSingle && framesSingle == framesTriple, "Slot frames shifted in style \(style)")
             }
-            print("[OK] White SVG icons, fixed non-moving widths across all 6 styles, & exact X-coordinate resolution verified")
+            print("[OK] White SVG icons, fixed non-moving widths across all 4 styles, & exact X-coordinate resolution verified")
 
             // 3. Verify History Multi-Cycle, Zero-Sample Live Cycle Synthesis, & Token Aggregation Analytics
             let now = Date()

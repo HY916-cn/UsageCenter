@@ -11,6 +11,40 @@ try? FileManager.default.removeItem(at: iconsetDir)
 try FileManager.default.createDirectory(at: iconsetDir, withIntermediateDirectories: true)
 try FileManager.default.createDirectory(at: resourcesDir, withIntermediateDirectories: true)
 
+/// Straight-edged macOS icon silhouette with G2-continuous superelliptical corners.
+func makeSuperellipsePath(in rect: CGRect, exponent n: CGFloat = 5.0, stepsPerCorner: Int = 64) -> CGPath {
+    let r = min(rect.width, rect.height) * 0.225
+    let twoOverN = 2.0 / n
+    let path = CGMutablePath()
+
+    let corners: [(cx: CGFloat, cy: CGFloat, startAngle: CGFloat, endAngle: CGFloat)] = [
+        (rect.maxX - r, rect.maxY - r, 0.0, .pi / 2.0),
+        (rect.minX + r, rect.maxY - r, .pi / 2.0, .pi),
+        (rect.minX + r, rect.minY + r, .pi, 1.5 * .pi),
+        (rect.maxX - r, rect.minY + r, 1.5 * .pi, 2.0 * .pi)
+    ]
+
+    var isFirst = true
+    for corner in corners {
+        for i in 0...stepsPerCorner {
+            let t = CGFloat(i) / CGFloat(stepsPerCorner)
+            let theta = corner.startAngle + t * (corner.endAngle - corner.startAngle)
+            let cosT = cos(theta)
+            let sinT = sin(theta)
+            let x = corner.cx + r * (cosT >= 0 ? 1 : -1) * pow(abs(cosT), twoOverN)
+            let y = corner.cy + r * (sinT >= 0 ? 1 : -1) * pow(abs(sinT), twoOverN)
+            if isFirst {
+                path.move(to: CGPoint(x: x, y: y))
+                isFirst = false
+            } else {
+                path.addLine(to: CGPoint(x: x, y: y))
+            }
+        }
+    }
+    path.closeSubpath()
+    return path
+}
+
 func renderIcon(pixelSize: Int) -> Data {
     let s = CGFloat(pixelSize)
     let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
@@ -28,153 +62,166 @@ func renderIcon(pixelSize: Int) -> Data {
     ctx.setAllowsAntialiasing(true)
     ctx.setShouldAntialias(true)
 
-    let pad = s * 0.09765625 // 100 / 1024 standard macOS icon inset
-    let rect = CGRect(x: pad, y: pad, width: s - pad * 2, height: s - pad * 2)
-    let radius = rect.width * 0.225
-    let squircle = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+    let pad = s * 0.09765625 // 100 / 1024 standard macOS icon margin
+    let cardRect = CGRect(x: pad, y: pad, width: s - pad * 2, height: s - pad * 2)
+    let squircle = makeSuperellipsePath(in: cardRect, exponent: 4.6)
 
-    // Outer soft drop shadow
+    // 1. Soft macOS elevation drop shadow
     ctx.saveGState()
     ctx.setShadow(
-        offset: CGSize(width: 0, height: -s * 0.018),
-        blur: s * 0.042,
-        color: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.42)
+        offset: CGSize(width: 0, height: -s * 0.020),
+        blur: s * 0.040,
+        color: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.40)
     )
-    ctx.setFillColor(CGColor(srgbRed: 0.05, green: 0.10, blue: 0.18, alpha: 1.0))
+    ctx.setFillColor(CGColor(srgbRed: 0.06, green: 0.08, blue: 0.11, alpha: 1.0))
     ctx.addPath(squircle)
     ctx.fillPath()
     ctx.restoreGState()
 
-    // Clip to squircle for Liquid Glass interior
+    // 2. Clip to continuous superellipse
     ctx.saveGState()
     ctx.addPath(squircle)
     ctx.clip()
 
-    // Deep Liquid Glass gradient backdrop
+    // Deep graphite-obsidian Liquid Glass surface
     let bgColors = [
-        CGColor(srgbRed: 0.10, green: 0.22, blue: 0.36, alpha: 1.0),
-        CGColor(srgbRed: 0.05, green: 0.11, blue: 0.20, alpha: 1.0),
-        CGColor(srgbRed: 0.03, green: 0.06, blue: 0.12, alpha: 1.0)
+        CGColor(srgbRed: 0.13, green: 0.16, blue: 0.20, alpha: 1.0),
+        CGColor(srgbRed: 0.07, green: 0.09, blue: 0.12, alpha: 1.0),
+        CGColor(srgbRed: 0.04, green: 0.05, blue: 0.07, alpha: 1.0)
     ] as CFArray
-    let bgGrad = CGGradient(colorsSpace: colorSpace, colors: bgColors, locations: [0.0, 0.55, 1.0])!
+    let bgGrad = CGGradient(colorsSpace: colorSpace, colors: bgColors, locations: [0.0, 0.58, 1.0])!
     ctx.drawLinearGradient(
         bgGrad,
-        start: CGPoint(x: rect.minX, y: rect.maxY),
-        end: CGPoint(x: rect.maxX, y: rect.minY),
+        start: CGPoint(x: cardRect.midX, y: cardRect.maxY),
+        end: CGPoint(x: cardRect.midX, y: cardRect.minY),
         options: []
     )
 
-    // Top-left cyan glass refraction glow
-    let glowColors = [
-        CGColor(srgbRed: 0.30, green: 0.84, blue: 0.96, alpha: 0.36),
-        CGColor(srgbRed: 0.20, green: 0.62, blue: 0.95, alpha: 0.0)
+    // Subtle top-left cyan glass ambient light
+    let ambientColors = [
+        CGColor(srgbRed: 0.24, green: 0.78, blue: 0.88, alpha: 0.22),
+        CGColor(srgbRed: 0.14, green: 0.45, blue: 0.65, alpha: 0.0)
     ] as CFArray
-    let glowGrad = CGGradient(colorsSpace: colorSpace, colors: glowColors, locations: [0.0, 1.0])!
+    let ambientGrad = CGGradient(colorsSpace: colorSpace, colors: ambientColors, locations: [0.0, 1.0])!
     ctx.drawRadialGradient(
-        glowGrad,
-        startCenter: CGPoint(x: rect.minX + rect.width * 0.24, y: rect.maxY - rect.height * 0.20),
+        ambientGrad,
+        startCenter: CGPoint(x: cardRect.minX + cardRect.width * 0.26, y: cardRect.maxY - cardRect.height * 0.16),
         startRadius: 0,
-        endCenter: CGPoint(x: rect.minX + rect.width * 0.24, y: rect.maxY - rect.height * 0.20),
-        endRadius: rect.width * 0.72,
+        endCenter: CGPoint(x: cardRect.minX + cardRect.width * 0.26, y: cardRect.maxY - cardRect.height * 0.16),
+        endRadius: cardRect.width * 0.78,
         options: []
     )
 
-    let center = CGPoint(x: s * 0.5, y: s * 0.5)
-    let outerR = rect.width * 0.305
-    let outerW = rect.width * 0.072
-    let innerR = rect.width * 0.195
-    let innerW = rect.width * 0.056
+    // 3. Four Precision Vertical Telemetry Capsule Bars (Claude / ChatGPT / Antigravity / DeepSeek)
+    let barCount = 4
+    let barWidth = cardRect.width * 0.118
+    let barGap = cardRect.width * 0.052
+    let totalBarsWidth = CGFloat(barCount) * barWidth + CGFloat(barCount - 1) * barGap
+    let startX = cardRect.midX - totalBarsWidth / 2.0
+    let trackHeight = cardRect.height * 0.54
+    let trackMinY = cardRect.midY - trackHeight / 2.0
+    let pillRadius = barWidth / 2.0
 
-    func strokeRing(radius: CGFloat, lineWidth: CGFloat, startDeg: CGFloat, endDeg: CGFloat, color: CGColor) {
-        ctx.saveGState()
-        ctx.setStrokeColor(color)
-        ctx.setLineWidth(lineWidth)
-        ctx.setLineCap(.round)
-        let path = CGMutablePath()
-        path.addArc(
-            center: center,
-            radius: radius,
-            startAngle: startDeg * .pi / 180.0,
-            endAngle: endDeg * .pi / 180.0,
-            clockwise: true
+    struct BarSpec {
+        let fillFraction: CGFloat
+        let topColor: CGColor
+        let bottomColor: CGColor
+        let glowColor: CGColor
+    }
+
+    let bars: [BarSpec] = [
+        BarSpec(
+            fillFraction: 0.76,
+            topColor: CGColor(srgbRed: 0.99, green: 0.99, blue: 1.00, alpha: 1.0),
+            bottomColor: CGColor(srgbRed: 0.82, green: 0.91, blue: 0.97, alpha: 1.0),
+            glowColor: CGColor(srgbRed: 1.0, green: 1.0, blue: 1.0, alpha: 0.22)
+        ),
+        BarSpec(
+            fillFraction: 0.93,
+            topColor: CGColor(srgbRed: 0.48, green: 0.94, blue: 0.99, alpha: 1.0),
+            bottomColor: CGColor(srgbRed: 0.18, green: 0.73, blue: 0.84, alpha: 1.0),
+            glowColor: CGColor(srgbRed: 0.36, green: 0.86, blue: 0.95, alpha: 0.34)
+        ),
+        BarSpec(
+            fillFraction: 0.48,
+            topColor: CGColor(srgbRed: 1.00, green: 0.88, blue: 0.32, alpha: 1.0),
+            bottomColor: CGColor(srgbRed: 0.96, green: 0.66, blue: 0.14, alpha: 1.0),
+            glowColor: CGColor(srgbRed: 1.00, green: 0.80, blue: 0.20, alpha: 0.30)
+        ),
+        BarSpec(
+            fillFraction: 0.82,
+            topColor: CGColor(srgbRed: 0.46, green: 0.82, blue: 1.00, alpha: 1.0),
+            bottomColor: CGColor(srgbRed: 0.22, green: 0.58, blue: 0.96, alpha: 1.0),
+            glowColor: CGColor(srgbRed: 0.34, green: 0.76, blue: 1.00, alpha: 0.28)
         )
-        ctx.addPath(path)
+    ]
+
+    for (idx, spec) in bars.enumerated() {
+        let bx = startX + CGFloat(idx) * (barWidth + barGap)
+        let trackRect = CGRect(x: bx, y: trackMinY, width: barWidth, height: trackHeight)
+        let trackPath = CGPath(roundedRect: trackRect, cornerWidth: pillRadius, cornerHeight: pillRadius, transform: nil)
+
+        // Recessed frosted track
+        ctx.saveGState()
+        ctx.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.085))
+        ctx.addPath(trackPath)
+        ctx.fillPath()
+        ctx.setStrokeColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.10))
+        ctx.setLineWidth(max(0.8, s * 0.0022))
+        ctx.addPath(trackPath)
         ctx.strokePath()
+        ctx.restoreGState()
+
+        // Active luminous fill bar
+        let fillH = max(barWidth, trackHeight * spec.fillFraction)
+        let fillRect = CGRect(x: bx, y: trackMinY, width: barWidth, height: fillH)
+        let fillPath = CGPath(roundedRect: fillRect, cornerWidth: pillRadius, cornerHeight: pillRadius, transform: nil)
+
+        ctx.saveGState()
+        ctx.setShadow(offset: .zero, blur: s * 0.022, color: spec.glowColor)
+        ctx.addPath(fillPath)
+        ctx.setFillColor(spec.topColor)
+        ctx.fillPath()
+        ctx.restoreGState()
+
+        ctx.saveGState()
+        ctx.addPath(fillPath)
+        ctx.clip()
+        let barGrad = CGGradient(
+            colorsSpace: colorSpace,
+            colors: [spec.topColor, spec.bottomColor] as CFArray,
+            locations: [0.0, 1.0]
+        )!
+        ctx.drawLinearGradient(
+            barGrad,
+            start: CGPoint(x: fillRect.midX, y: fillRect.maxY),
+            end: CGPoint(x: fillRect.midX, y: fillRect.minY),
+            options: []
+        )
         ctx.restoreGState()
     }
 
-    // Tracks
-    strokeRing(
-        radius: outerR,
-        lineWidth: outerW,
-        startDeg: 0,
-        endDeg: 360,
-        color: CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.14)
-    )
-    strokeRing(
-        radius: innerR,
-        lineWidth: innerW,
-        startDeg: 0,
-        endDeg: 360,
-        color: CGColor(srgbRed: 0.34, green: 0.76, blue: 1.0, alpha: 0.18)
-    )
-
-    // Luminous Outer Quota Arc (82% remaining)
+    // 4. Top-lit Liquid Glass specular border
+    let insetBorder = cardRect.insetBy(dx: max(0.75, s * 0.0025), dy: max(0.75, s * 0.0025))
+    let borderSquircle = makeSuperellipsePath(in: insetBorder, exponent: 4.6)
     ctx.saveGState()
-    ctx.setShadow(
-        offset: .zero,
-        blur: s * 0.025,
-        color: CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.45)
-    )
-    strokeRing(
-        radius: outerR,
-        lineWidth: outerW,
-        startDeg: 90,
-        endDeg: 90 - 295,
-        color: CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.98)
+    ctx.addPath(borderSquircle)
+    ctx.setLineWidth(max(1.2, s * 0.005))
+    ctx.replacePathWithStrokedPath()
+    ctx.clip()
+    let rimColors = [
+        CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.36),
+        CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.12),
+        CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.05)
+    ] as CFArray
+    let rimGrad = CGGradient(colorsSpace: colorSpace, colors: rimColors, locations: [0.0, 0.5, 1.0])!
+    ctx.drawLinearGradient(
+        rimGrad,
+        start: CGPoint(x: cardRect.midX, y: cardRect.maxY),
+        end: CGPoint(x: cardRect.midX, y: cardRect.minY),
+        options: []
     )
     ctx.restoreGState()
-
-    // Luminous Inner Time Arc (64% remaining)
-    ctx.saveGState()
-    ctx.setShadow(
-        offset: .zero,
-        blur: s * 0.022,
-        color: CGColor(srgbRed: 0.34, green: 0.80, blue: 1.0, alpha: 0.55)
-    )
-    strokeRing(
-        radius: innerR,
-        lineWidth: innerW,
-        startDeg: 90,
-        endDeg: 90 - 232,
-        color: CGColor(srgbRed: 0.36, green: 0.82, blue: 1.0, alpha: 1.0)
-    )
-    ctx.restoreGState()
-
-    // Central 4-point star / pulse node symbolizing unified 4 AI providers
-    let starR = rect.width * 0.082
-    let starInner = starR * 0.34
-    let starPath = CGMutablePath()
-    for i in 0..<8 {
-        let angle = CGFloat(i) * (.pi / 4.0) - (.pi / 2.0)
-        let rad = (i % 2 == 0) ? starR : starInner
-        let pt = CGPoint(x: center.x + cos(angle) * rad, y: center.y + sin(angle) * rad)
-        if i == 0 {
-            starPath.move(to: pt)
-        } else {
-            starPath.addLine(to: pt)
-        }
-    }
-    starPath.closeSubpath()
-    ctx.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.96))
-    ctx.addPath(starPath)
-    ctx.fillPath()
-
-    // Crisp Liquid Glass inner rim stroke
-    ctx.addPath(squircle)
-    ctx.setStrokeColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.28))
-    ctx.setLineWidth(max(1.0, s * 0.004))
-    ctx.strokePath()
 
     ctx.restoreGState()
 

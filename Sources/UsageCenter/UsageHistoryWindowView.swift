@@ -159,18 +159,13 @@ struct UsageHistoryWindowView: View {
                         }
                     }
                 } else if activeProvider != .deepseek, snapshot.windows.count > 1 {
-                    UniformDropdown(
-                        selection: Binding(
-                            get: { store.historyWindowID ?? store.defaultHistoryWindowID(for: activeProvider) ?? "" },
-                            set: { store.historyWindowID = $0; store.hoveredQuotaPointID = nil }
-                        ),
-                        choices: snapshot.windows.map { win in
-                            let label = win.groupName.map { "\($0) · \(win.title)" } ?? win.title
-                            return DropdownChoice(title: label, value: win.id)
-                        },
-                        width: 216,
-                        height: 28
-                    )
+                    capsulePair(
+                        items: snapshot.windows.map { (shortHistoryWindowLabel($0), $0.id) },
+                        selected: store.historyWindowID ?? store.defaultHistoryWindowID(for: activeProvider) ?? ""
+                    ) { pickedID in
+                        store.historyWindowID = pickedID
+                        store.hoveredQuotaPointID = nil
+                    }
                 }
             }
 
@@ -656,6 +651,28 @@ struct UsageHistoryWindowView: View {
     private func bucketMidpoint(for date: Date, unit: Calendar.Component) -> Date {
         guard let iv = Calendar.current.dateInterval(of: unit, for: date) else { return date }
         return iv.start.addingTimeInterval(iv.duration / 2)
+    }
+
+    private func shortHistoryWindowLabel(_ win: QuotaWindow) -> String {
+        switch win.kind {
+        case .fiveHour:
+            return "5h"
+        case .weekly:
+            return "7d"
+        case .other:
+            if let open = win.title.firstIndex(of: "("),
+               let close = win.title.lastIndex(of: ")"),
+               open < close {
+                return String(win.title[win.title.index(after: open)..<close])
+            }
+            if let grp = win.groupName, !grp.isEmpty {
+                let short = grp
+                    .replacingOccurrences(of: "GPT-5.3-Codex-", with: "", options: .caseInsensitive)
+                    .replacingOccurrences(of: " models", with: "", options: .caseInsensitive)
+                return win.durationMinutes == 300 ? "\(short) 5h" : "\(short) 7d"
+            }
+            return win.title
+        }
     }
 
     private func capsulePair<Value: Equatable>(

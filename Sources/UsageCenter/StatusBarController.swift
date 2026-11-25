@@ -28,7 +28,6 @@ enum StatusSegmentRenderer {
         let isStale: Bool
     }
 
-    private static let ringSize: CGFloat = 16.5
     private static let barWidth: CGFloat = 22.0
     private static let barHeightVal: CGFloat = 3.0
     private static let iconSize: CGFloat = 14.5
@@ -177,8 +176,6 @@ enum StatusSegmentRenderer {
         }
 
         switch style {
-        case .rings:
-            return ringSize + 2.5 + textW
         case .horizontalBar, .dualBars:
             return barWidth + 3.0 + textW
         case .compactBar:
@@ -188,8 +185,6 @@ enum StatusSegmentRenderer {
             return fixedCompactBarColumnWidth
         case .statsMini:
             return textW
-        case .progressOnly:
-            return ringSize
         }
     }
 
@@ -234,25 +229,6 @@ enum StatusSegmentRenderer {
             let quotaColor = CodexPalette.quotaNSColor(for: unit.attention)
 
             switch layout.style {
-            case .rings:
-                let rRect = NSRect(x: x, y: midY - ringSize / 2, width: ringSize, height: ringSize)
-                drawConcentricRings(
-                    in: rRect,
-                    quotaPercent: unit.quotaPercent,
-                    timePercent: unit.timePercent,
-                    quotaColor: quotaColor
-                )
-                let tx = x + ringSize + 2.5
-                let tw = uWidth - ringSize - 2.5
-                drawPercentageOverCaption(
-                    primary: unit.primaryText,
-                    caption: unit.captionText,
-                    in: NSRect(x: tx, y: 0, width: tw, height: rect.height),
-                    primaryFont: pFont,
-                    primaryColor: primaryTextColor,
-                    captionColor: captionTextColor
-                )
-
             case .horizontalBar:
                 let bRect = NSRect(x: x, y: midY - barHeightVal / 2, width: barWidth, height: barHeightVal)
                 drawPillBar(in: bRect, percent: unit.quotaPercent, color: quotaColor)
@@ -309,15 +285,6 @@ enum StatusSegmentRenderer {
                     primaryColor: primaryTextColor,
                     captionColor: captionTextColor
                 )
-
-            case .progressOnly:
-                let rRect = NSRect(x: x, y: midY - ringSize / 2, width: ringSize, height: ringSize)
-                drawConcentricRings(
-                    in: rRect,
-                    quotaPercent: unit.quotaPercent,
-                    timePercent: unit.timePercent,
-                    quotaColor: quotaColor
-                )
             }
 
             x += uWidth
@@ -349,92 +316,6 @@ enum StatusSegmentRenderer {
             color: captionColor,
             alignment: .center
         )
-    }
-
-    private static func drawConcentricRings(
-        in rect: NSRect,
-        quotaPercent: Double?,
-        timePercent: Double?,
-        quotaColor: NSColor
-    ) {
-        let center = NSPoint(x: rect.midX, y: rect.midY)
-        let outerWidth: CGFloat = 2.6
-        let innerWidth: CGFloat = 1.8
-        let outerRadius = max(1, min(rect.width, rect.height) / 2 - outerWidth / 2)
-        let innerRadius = max(1, outerRadius - outerWidth / 2 - 0.35 - innerWidth / 2)
-
-        drawArc(
-            center: center,
-            radius: outerRadius,
-            lineWidth: outerWidth,
-            percent: nil,
-            color: NSColor.white.withAlphaComponent(0.24)
-        )
-        guard let quotaPercent else {
-            drawText(
-                "?",
-                in: NSRect(x: rect.minX, y: rect.midY - 5, width: rect.width, height: 10),
-                font: .systemFont(ofSize: 8, weight: .semibold),
-                color: NSColor.white.withAlphaComponent(0.75),
-                alignment: .center
-            )
-            return
-        }
-        drawArc(
-            center: center,
-            radius: outerRadius,
-            lineWidth: outerWidth,
-            percent: quotaPercent,
-            color: quotaColor
-        )
-
-        guard let timePercent else { return }
-        drawArc(
-            center: center,
-            radius: innerRadius,
-            lineWidth: innerWidth,
-            percent: nil,
-            color: CodexPalette.timeBlueNS.withAlphaComponent(0.26)
-        )
-        drawArc(
-            center: center,
-            radius: innerRadius,
-            lineWidth: innerWidth,
-            percent: timePercent,
-            color: CodexPalette.timeBlueNS
-        )
-    }
-
-    private static func drawArc(
-        center: NSPoint,
-        radius: CGFloat,
-        lineWidth: CGFloat,
-        percent: Double?,
-        color: NSColor
-    ) {
-        let path = NSBezierPath()
-        if let percent {
-            let fraction = CGFloat(min(100, max(0, percent))) / 100.0
-            guard fraction > 0.005 else { return }
-            path.appendArc(
-                withCenter: center,
-                radius: radius,
-                startAngle: 90,
-                endAngle: 90 - 360 * fraction,
-                clockwise: true
-            )
-            path.lineCapStyle = .round
-        } else {
-            path.appendOval(in: NSRect(
-                x: center.x - radius,
-                y: center.y - radius,
-                width: radius * 2,
-                height: radius * 2
-            ))
-        }
-        path.lineWidth = lineWidth
-        color.setStroke()
-        path.stroke()
     }
 
     private static func drawPillBar(in rect: NSRect, percent: Double?, color: NSColor) {

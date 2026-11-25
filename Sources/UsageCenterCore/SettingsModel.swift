@@ -1,24 +1,26 @@
 import Foundation
 
 public enum SegmentDisplayStyle: String, CaseIterable, Codable, Identifiable, Sendable {
-    case rings
-    case horizontalBar
-    case dualBars
     case compactBar
+    case dualBars
+    case horizontalBar
     case statsMini
-    case progressOnly
 
     public var id: String { rawValue }
 
     public var localizedName: String {
         switch self {
-        case .rings: return "双环 + 百分比"
-        case .horizontalBar: return "单条 + 百分比"
-        case .dualBars: return "双条 + 百分比"
         case .compactBar: return "百分比 + 底条"
+        case .dualBars: return "双条 + 百分比"
+        case .horizontalBar: return "单条 + 百分比"
         case .statsMini: return "纯数字"
-        case .progressOnly: return "仅图标与双环"
         }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = (try? container.decode(String.self)) ?? ""
+        self = SegmentDisplayStyle(rawValue: raw) ?? .compactBar
     }
 }
 
@@ -179,7 +181,7 @@ public struct UsageCenterPreferences: Codable, Equatable, Sendable {
 
     public init(
         sections: [ProviderSectionConfig] = ProviderID.allCases.map { ProviderSectionConfig(provider: $0) },
-        globalStyle: SegmentDisplayStyle = .rings,
+        globalStyle: SegmentDisplayStyle = .compactBar,
         percentMode: QuotaPercentMode = .remaining,
         timeDisplayMode: TimeDisplayMode = .hidden,
         showsDividers: Bool = true,

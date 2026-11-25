@@ -28,31 +28,24 @@ public enum BrandIconRenderer {
         return loaded
     }
 
-    /// Pure white monochrome UsageCenter emblem (concentric dual-arc + 4-point star) for status bar fallback.
+    /// Pure white monochrome UsageCenter 4-bar emblem for status bar fallback.
     public static func appMarkWhite(size: CGFloat = 15) -> NSImage {
         let img = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
-            let c = NSPoint(x: rect.midX, y: rect.midY)
-            let outerR = size * 0.42
-            let innerR = size * 0.25
+            let barW = size * 0.145
+            let gap = size * 0.075
+            let totalW = barW * 4 + gap * 3
+            let startX = rect.midX - totalW / 2
+            let maxH = size * 0.76
+            let baseY = rect.midY - maxH / 2
+            let heights: [CGFloat] = [0.74, 0.96, 0.52, 0.84]
 
-            let outer = NSBezierPath()
-            outer.appendArc(withCenter: c, radius: outerR, startAngle: 90, endAngle: -205, clockwise: true)
-            outer.lineWidth = max(1.4, size * 0.11)
-            outer.lineCapStyle = .round
-            NSColor.white.setStroke()
-            outer.stroke()
-
-            let inner = NSBezierPath()
-            inner.appendArc(withCenter: c, radius: innerR, startAngle: 90, endAngle: -145, clockwise: true)
-            inner.lineWidth = max(1.1, size * 0.085)
-            inner.lineCapStyle = .round
-            NSColor.white.withAlphaComponent(0.85).setStroke()
-            inner.stroke()
-
-            let dotR = size * 0.08
-            let dot = NSBezierPath(ovalIn: NSRect(x: c.x - dotR, y: c.y - dotR, width: dotR * 2, height: dotR * 2))
             NSColor.white.setFill()
-            dot.fill()
+            for (i, frac) in heights.enumerated() {
+                let x = startX + CGFloat(i) * (barW + gap)
+                let h = max(barW, maxH * frac)
+                let r = NSRect(x: x, y: baseY, width: barW, height: h)
+                NSBezierPath(roundedRect: r, xRadius: barW / 2, yRadius: barW / 2).fill()
+            }
             return true
         }
         img.isTemplate = false

@@ -314,25 +314,11 @@ struct ProviderDetailPopoverView: View {
                     }
                     .fixedSize(horizontal: true, vertical: false)
                 } else if provider != .deepseek, snapshot.windows.count > 1 {
-                    if snapshot.windows.count > 2 {
-                        UniformDropdown(
-                            selection: Binding(
-                                get: { activeWin?.id ?? snapshot.windows.first?.id ?? "" },
-                                set: { store.popoverHistoryWindowIDs[provider] = $0 }
-                            ),
-                            choices: snapshot.windows.map { win in
-                                DropdownChoice(title: shortWindowDropdownTitle(win), value: win.id)
-                            },
-                            width: 140,
-                            height: 24
-                        )
-                    } else {
-                        segmentedCapsule(
-                            items: snapshot.windows.map { (shortWindowPillTitle($0), $0.id) },
-                            selected: activeWin?.id ?? snapshot.windows.first?.id ?? ""
-                        ) { pickedID in
-                            store.popoverHistoryWindowIDs[provider] = pickedID
-                        }
+                    segmentedCapsule(
+                        items: snapshot.windows.map { (shortWindowPillTitle($0), $0.id) },
+                        selected: activeWin?.id ?? snapshot.windows.first?.id ?? ""
+                    ) { pickedID in
+                        store.popoverHistoryWindowIDs[provider] = pickedID
                     }
                 }
 
@@ -581,26 +567,24 @@ struct ProviderDetailPopoverView: View {
 
     private func shortWindowPillTitle(_ win: QuotaWindow) -> String {
         switch win.kind {
-        case .fiveHour: return "5h"
-        case .weekly: return "7d"
-        case .other: return win.title
+        case .fiveHour:
+            return "5h"
+        case .weekly:
+            return "7d"
+        case .other:
+            if let open = win.title.firstIndex(of: "("),
+               let close = win.title.lastIndex(of: ")"),
+               open < close {
+                return String(win.title[win.title.index(after: open)..<close])
+            }
+            if let grp = win.groupName, !grp.isEmpty {
+                let short = grp
+                    .replacingOccurrences(of: "GPT-5.3-Codex-", with: "", options: .caseInsensitive)
+                    .replacingOccurrences(of: " models", with: "", options: .caseInsensitive)
+                return win.durationMinutes == 300 ? "\(short) 5h" : "\(short) 7d"
+            }
+            return win.title
         }
-    }
-
-    private func shortWindowDropdownTitle(_ win: QuotaWindow) -> String {
-        let period: String = switch win.kind {
-        case .fiveHour: "5h"
-        case .weekly: "7d"
-        case .other: win.title
-        }
-        if let grp = win.groupName, !grp.isEmpty {
-            let short = grp
-                .replacingOccurrences(of: " models", with: "", options: .caseInsensitive)
-                .replacingOccurrences(of: "Claude and GPT", with: "Claude / GPT", options: .caseInsensitive)
-                .replacingOccurrences(of: "Claude / GPT-OSS", with: "Claude / GPT", options: .caseInsensitive)
-            return "\(short) · \(period)"
-        }
-        return win.title
     }
 
     private func compactForecastDate(_ date: Date) -> String {
