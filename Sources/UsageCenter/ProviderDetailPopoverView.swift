@@ -46,11 +46,6 @@ struct ProviderDetailPopoverView: View {
         .padding(16)
         .frame(width: 384)
         .fixedSize(horizontal: false, vertical: true)
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.9)
-                .allowsHitTesting(false)
-        }
         .applyDarkLiquidGlassTheme()
         .id(provider)
         .onAppear {
@@ -280,42 +275,64 @@ struct ProviderDetailPopoverView: View {
         )
 
         return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .center, spacing: 6) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(provider == .deepseek ? "余额历史" : "配额历史")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
+                        .lineLimit(1)
                     Text(inlineHistorySubtitle(series: series, activeWindow: activeWin))
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.white.opacity(0.68))
+                        .lineLimit(1)
                 }
 
-                Spacer()
+                Spacer(minLength: 4)
 
                 if provider != .deepseek, snapshot.windows.count > 1 {
-                    HStack(spacing: 3) {
-                        ForEach(snapshot.windows.prefix(3)) { win in
-                            let isSel = (win.id == activeWin?.id)
-                            Button {
-                                store.popoverHistoryWindowIDs[provider] = win.id
-                            } label: {
-                                Text(shortWindowPillTitle(win))
-                                    .font(.system(size: 10.5, weight: isSel ? .semibold : .regular))
-                                    .foregroundStyle(isSel ? .white : .white.opacity(0.68))
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background {
-                                        if isSel {
-                                            Capsule().fill(CodexPalette.chartAccent.opacity(0.32))
+                    let usesGroupedDropdown = snapshot.windows.count > 2
+                        || snapshot.windows.contains(where: { ($0.groupName?.isEmpty == false) })
+
+                    if usesGroupedDropdown {
+                        UniformDropdown(
+                            selection: Binding(
+                                get: { activeWin?.id ?? snapshot.windows.first?.id ?? "" },
+                                set: { store.popoverHistoryWindowIDs[provider] = $0 }
+                            ),
+                            choices: snapshot.windows.map { win in
+                                DropdownChoice(title: shortWindowDropdownTitle(win), value: win.id)
+                            },
+                            width: 140,
+                            height: 24
+                        )
+                    } else {
+                        HStack(spacing: 3) {
+                            ForEach(snapshot.windows) { win in
+                                let isSel = (win.id == activeWin?.id)
+                                Button {
+                                    store.popoverHistoryWindowIDs[provider] = win.id
+                                } label: {
+                                    Text(shortWindowPillTitle(win))
+                                        .font(.system(size: 10.5, weight: isSel ? .semibold : .regular))
+                                        .foregroundStyle(isSel ? .white : .white.opacity(0.68))
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 3)
+                                        .background {
+                                            if isSel {
+                                                Capsule().fill(CodexPalette.chartAccent.opacity(0.32))
+                                            }
                                         }
-                                    }
-                                    .contentShape(Capsule())
+                                        .contentShape(Capsule())
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
+                        .padding(2)
+                        .background(Color.white.opacity(0.08), in: Capsule())
+                        .fixedSize(horizontal: true, vertical: false)
                     }
-                    .padding(2)
-                    .background(Color.white.opacity(0.08), in: Capsule())
                 }
 
                 Button {
@@ -327,13 +344,15 @@ struct ProviderDetailPopoverView: View {
                     HStack(spacing: 3) {
                         Text("全部")
                             .font(.caption2.weight(.medium))
+                            .lineLimit(1)
                         Image(systemName: "chevron.right")
                             .font(.system(size: 10, weight: .semibold))
                     }
                     .foregroundStyle(.white.opacity(0.75))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8)
+                    .frame(height: 24)
                     .background(Color.white.opacity(0.08), in: Capsule())
+                    .fixedSize(horizontal: true, vertical: false)
                 }
                 .buttonStyle(.plain)
             }
@@ -473,13 +492,15 @@ struct ProviderDetailPopoverView: View {
                                     compact: true
                                 )
                             }
-                            Spacer()
+                            Spacer(minLength: 4)
                             if let proj = series.projectedExhaustionDate {
-                                Text("预计 \(TimeFormatting.fullDateTime(proj)) 耗尽")
+                                Text("预计 \(compactForecastDate(proj)) 耗尽")
                                     .foregroundStyle(CodexPalette.warningYellow)
+                                    .lineLimit(1)
                             } else if let remProj = series.projectedRemainingAtReset {
                                 Text("预计重置余 \(remProj)%")
                                     .foregroundStyle(.white.opacity(0.66))
+                                    .lineLimit(1)
                             }
                         }
                         .font(.system(size: 10).monospacedDigit())
@@ -507,17 +528,34 @@ struct ProviderDetailPopoverView: View {
     }
 
     private func shortWindowPillTitle(_ win: QuotaWindow) -> String {
-        if let grp = win.groupName, !grp.isEmpty {
-            let short = grp
-                .replacingOccurrences(of: " models", with: "", options: .caseInsensitive)
-                .replacingOccurrences(of: "Claude / GPT-OSS", with: "Claude")
-            return win.kind == .fiveHour ? "\(short) 5h" : "\(short) 7d"
-        }
         switch win.kind {
         case .fiveHour: return "5h"
         case .weekly: return "7d"
         case .other: return win.title
         }
+    }
+
+    private func shortWindowDropdownTitle(_ win: QuotaWindow) -> String {
+        let period: String = switch win.kind {
+        case .fiveHour: "5h"
+        case .weekly: "7d"
+        case .other: win.title
+        }
+        if let grp = win.groupName, !grp.isEmpty {
+            let short = grp
+                .replacingOccurrences(of: " models", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: "Claude and GPT", with: "Claude / GPT", options: .caseInsensitive)
+                .replacingOccurrences(of: "Claude / GPT-OSS", with: "Claude / GPT", options: .caseInsensitive)
+            return "\(short) · \(period)"
+        }
+        return win.title
+    }
+
+    private func compactForecastDate(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "MM/dd HH:mm"
+        return f.string(from: date)
     }
 
     private func inlineAxisDateLabel(_ date: Date, window: QuotaWindow?) -> String {

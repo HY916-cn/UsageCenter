@@ -675,27 +675,22 @@ final class CompositeStatusBarView: NSView {
 @MainActor
 final class LiquidGlassPopupPanel: NSPanel {
     private static let cornerRadius: CGFloat = 20
-    private static let horizontalShadowPad: CGFloat = 18
-    private static let bottomShadowPad: CGFloat = 22
-    private static let topShadowPad: CGFloat = 6
+    private static let edgeClearance: CGFloat = 2
+    private static let topGapBelowMenuBar: CGFloat = 6
 
     private let outerContainer = NSView()
-    private let shadowCasterLayer = CALayer()
-    private let shadowCutoutMask = CAShapeLayer()
     private let glassContainer = NSGlassEffectView()
     private var hostingView: NSHostingView<ProviderDetailPopoverView>?
 
     init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 416, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: 388, height: 460),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         self.isOpaque = false
         self.backgroundColor = .clear
-        // Disable WindowServer's rectangular/.darkAqua 1px black border rim;
-        // render a clean masked continuous-squircle shadow outside glassContainer instead.
         self.hasShadow = false
         self.level = .statusBar
         self.collectionBehavior = [.transient, .moveToActiveSpace, .ignoresCycle]
@@ -705,15 +700,6 @@ final class LiquidGlassPopupPanel: NSPanel {
         outerContainer.wantsLayer = true
         outerContainer.layer?.backgroundColor = NSColor.clear.cgColor
         outerContainer.layer?.masksToBounds = false
-
-        shadowCasterLayer.backgroundColor = NSColor.clear.cgColor
-        shadowCasterLayer.shadowColor = NSColor.black.cgColor
-        shadowCasterLayer.shadowOpacity = 0.28
-        shadowCasterLayer.shadowRadius = 11
-        shadowCasterLayer.shadowOffset = CGSize(width: 0, height: -4)
-        shadowCutoutMask.fillRule = .evenOdd
-        shadowCasterLayer.mask = shadowCutoutMask
-        outerContainer.layer?.addSublayer(shadowCasterLayer)
 
         glassContainer.cornerRadius = Self.cornerRadius
         glassContainer.style = .regular
@@ -726,8 +712,7 @@ final class LiquidGlassPopupPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 
     var cardScreenRect: NSRect {
-        let local = glassContainer.frame
-        return convertToScreen(local)
+        convertToScreen(glassContainer.frame)
     }
 
     func present(
@@ -770,8 +755,8 @@ final class LiquidGlassPopupPanel: NSPanel {
         let cardWidth: CGFloat = max(384, ceil(fitting.width))
         let cardHeight: CGFloat = max(180, ceil(fitting.height))
 
-        let panelWidth = cardWidth + Self.horizontalShadowPad * 2
-        let panelHeight = cardHeight + Self.bottomShadowPad + Self.topShadowPad
+        let panelWidth = cardWidth + Self.edgeClearance * 2
+        let panelHeight = cardHeight + Self.edgeClearance * 2
 
         if !forceApply,
            abs(frame.height - panelHeight) <= 1,
@@ -785,13 +770,13 @@ final class LiquidGlassPopupPanel: NSPanel {
 
         var cardOriginX = round(anchorRect.midX - cardWidth / 2)
         cardOriginX = min(max(visibleFrame.minX + 8, cardOriginX), visibleFrame.maxX - cardWidth - 8)
-        let panelOriginX = cardOriginX - Self.horizontalShadowPad
-        let panelOriginY = round(anchorRect.minY - panelHeight)
+        let panelOriginX = cardOriginX - Self.edgeClearance
+        let panelOriginY = round(anchorRect.minY - Self.topGapBelowMenuBar - cardHeight - Self.edgeClearance)
 
         let targetFrame = NSRect(x: panelOriginX, y: panelOriginY, width: panelWidth, height: panelHeight)
         let cardFrame = NSRect(
-            x: Self.horizontalShadowPad,
-            y: Self.bottomShadowPad,
+            x: Self.edgeClearance,
+            y: Self.edgeClearance,
             width: cardWidth,
             height: cardHeight
         )
@@ -801,20 +786,6 @@ final class LiquidGlassPopupPanel: NSPanel {
         outerContainer.frame = NSRect(origin: .zero, size: targetFrame.size)
         glassContainer.frame = cardFrame
         host.frame = glassContainer.bounds
-
-        shadowCasterLayer.frame = outerContainer.bounds
-        let cardSquircle = NSBezierPath(
-            roundedRect: cardFrame,
-            xRadius: Self.cornerRadius,
-            yRadius: Self.cornerRadius
-        )
-        shadowCasterLayer.shadowPath = cardSquircle.cgPath
-
-        let cutout = CGMutablePath()
-        cutout.addRect(outerContainer.bounds)
-        cutout.addPath(cardSquircle.cgPath)
-        shadowCutoutMask.frame = outerContainer.bounds
-        shadowCutoutMask.path = cutout
         CATransaction.commit()
 
         setFrame(targetFrame, display: true)
