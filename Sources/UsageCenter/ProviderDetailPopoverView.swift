@@ -289,11 +289,32 @@ struct ProviderDetailPopoverView: View {
 
                 Spacer(minLength: 4)
 
-                if provider != .deepseek, snapshot.windows.count > 1 {
-                    let usesGroupedDropdown = snapshot.windows.count > 2
-                        || snapshot.windows.contains(where: { ($0.groupName?.isEmpty == false) })
+                if provider == .antigravity, snapshot.windows.count > 1 {
+                    let isThirdParty = isThirdPartyWindow(activeWin)
+                    let currentKind: WindowKind = (activeWin?.kind == .fiveHour) ? .fiveHour : .weekly
 
-                    if usesGroupedDropdown {
+                    HStack(spacing: 5) {
+                        segmentedCapsule(
+                            items: [("Gemini", false), ("第三方", true)],
+                            selected: isThirdParty
+                        ) { pickThirdParty in
+                            if let target = findAntigravityWindow(thirdParty: pickThirdParty, kind: currentKind) {
+                                store.popoverHistoryWindowIDs[.antigravity] = target.id
+                            }
+                        }
+
+                        segmentedCapsule(
+                            items: [("5h", WindowKind.fiveHour), ("7d", WindowKind.weekly)],
+                            selected: currentKind
+                        ) { pickKind in
+                            if let target = findAntigravityWindow(thirdParty: isThirdParty, kind: pickKind) {
+                                store.popoverHistoryWindowIDs[.antigravity] = target.id
+                            }
+                        }
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                } else if provider != .deepseek, snapshot.windows.count > 1 {
+                    if snapshot.windows.count > 2 {
                         UniformDropdown(
                             selection: Binding(
                                 get: { activeWin?.id ?? snapshot.windows.first?.id ?? "" },
@@ -306,32 +327,12 @@ struct ProviderDetailPopoverView: View {
                             height: 24
                         )
                     } else {
-                        HStack(spacing: 3) {
-                            ForEach(snapshot.windows) { win in
-                                let isSel = (win.id == activeWin?.id)
-                                Button {
-                                    store.popoverHistoryWindowIDs[provider] = win.id
-                                } label: {
-                                    Text(shortWindowPillTitle(win))
-                                        .font(.system(size: 10.5, weight: isSel ? .semibold : .regular))
-                                        .foregroundStyle(isSel ? .white : .white.opacity(0.68))
-                                        .lineLimit(1)
-                                        .fixedSize(horizontal: true, vertical: false)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 3)
-                                        .background {
-                                            if isSel {
-                                                Capsule().fill(CodexPalette.chartAccent.opacity(0.32))
-                                            }
-                                        }
-                                        .contentShape(Capsule())
-                                }
-                                .buttonStyle(.plain)
-                            }
+                        segmentedCapsule(
+                            items: snapshot.windows.map { (shortWindowPillTitle($0), $0.id) },
+                            selected: activeWin?.id ?? snapshot.windows.first?.id ?? ""
+                        ) { pickedID in
+                            store.popoverHistoryWindowIDs[provider] = pickedID
                         }
-                        .padding(2)
-                        .background(Color.white.opacity(0.08), in: Capsule())
-                        .fixedSize(horizontal: true, vertical: false)
                     }
                 }
 
@@ -519,12 +520,63 @@ struct ProviderDetailPopoverView: View {
             }
             return "近 7 天轨迹"
         }
+        if provider == .antigravity {
+            if let series {
+                let prefix = series.isLowerBoundConsumption ? "≥" : ""
+                return "已消耗 \(prefix)\(series.observedConsumedPercent)%"
+            }
+            return "当前周期"
+        }
         let winLabel = activeWindow?.title ?? "当前周期"
         if let series {
             let prefix = series.isLowerBoundConsumption ? "≥" : ""
             return "\(winLabel) · 已消耗 \(prefix)\(series.observedConsumedPercent)%"
         }
         return winLabel
+    }
+
+    private func segmentedCapsule<Value: Equatable>(
+        items: [(String, Value)],
+        selected: Value,
+        onSelect: @escaping (Value) -> Void
+    ) -> some View {
+        HStack(spacing: 2) {
+            ForEach(Array(items.enumerated()), id: \.offset) { _, pair in
+                let isSel = (pair.1 == selected)
+                Button {
+                    onSelect(pair.1)
+                } label: {
+                    Text(pair.0)
+                        .font(.system(size: 10.5, weight: isSel ? .semibold : .regular))
+                        .foregroundStyle(isSel ? .white : .white.opacity(0.68))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.horizontal, 7.5)
+                        .padding(.vertical, 3)
+                        .background {
+                            if isSel {
+                                Capsule().fill(CodexPalette.chartAccent.opacity(0.34))
+                            }
+                        }
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(Color.white.opacity(0.08), in: Capsule())
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func isThirdPartyWindow(_ win: QuotaWindow?) -> Bool {
+        guard let grp = win?.groupName?.lowercased(), !grp.isEmpty else { return false }
+        return !grp.contains("gemini")
+    }
+
+    private func findAntigravityWindow(thirdParty: Bool, kind: WindowKind) -> QuotaWindow? {
+        snapshot.windows.first { isThirdPartyWindow($0) == thirdParty && $0.kind == kind }
+            ?? snapshot.windows.first { isThirdPartyWindow($0) == thirdParty }
+            ?? snapshot.windows.first { $0.kind == kind }
     }
 
     private func shortWindowPillTitle(_ win: QuotaWindow) -> String {

@@ -127,16 +127,16 @@ struct ChartLegendItem: View {
             Canvas { ctx, size in
                 let w = size.width
                 let h = size.height
+                let startPt = CGPoint(x: 1, y: h * 0.22)
+                let endPt = CGPoint(x: w - 2.6, y: h * 0.74)
+                let c1 = CGPoint(x: w * 0.42, y: h * 0.22)
+                let c2 = CGPoint(x: w * 0.58, y: h * 0.74)
 
                 var area = Path()
-                area.move(to: CGPoint(x: 1, y: h - 1))
-                area.addLine(to: CGPoint(x: 1, y: h * 0.72))
-                area.addCurve(
-                    to: CGPoint(x: w - 1, y: h * 0.24),
-                    control1: CGPoint(x: w * 0.36, y: h * 0.76),
-                    control2: CGPoint(x: w * 0.62, y: h * 0.22)
-                )
-                area.addLine(to: CGPoint(x: w - 1, y: h - 1))
+                area.move(to: CGPoint(x: startPt.x, y: h - 1))
+                area.addLine(to: startPt)
+                area.addCurve(to: endPt, control1: c1, control2: c2)
+                area.addLine(to: CGPoint(x: endPt.x, y: h - 1))
                 area.closeSubpath()
                 ctx.fill(
                     area,
@@ -148,12 +148,8 @@ struct ChartLegendItem: View {
                 )
 
                 var curve = Path()
-                curve.move(to: CGPoint(x: 1, y: h * 0.72))
-                curve.addCurve(
-                    to: CGPoint(x: w - 1, y: h * 0.24),
-                    control1: CGPoint(x: w * 0.36, y: h * 0.76),
-                    control2: CGPoint(x: w * 0.62, y: h * 0.22)
-                )
+                curve.move(to: startPt)
+                curve.addCurve(to: endPt, control1: c1, control2: c2)
                 ctx.stroke(
                     curve,
                     with: .color(CodexPalette.chartAccentBright),
@@ -161,8 +157,7 @@ struct ChartLegendItem: View {
                 )
 
                 let dotR: CGFloat = compact ? 2.1 : 2.5
-                let dotCenter = CGPoint(x: w - 2.6, y: h * 0.26)
-                let dotRect = CGRect(x: dotCenter.x - dotR, y: dotCenter.y - dotR, width: dotR * 2, height: dotR * 2)
+                let dotRect = CGRect(x: endPt.x - dotR, y: endPt.y - dotR, width: dotR * 2, height: dotR * 2)
                 ctx.fill(Path(ellipseIn: dotRect), with: .color(CodexPalette.chartAccentBright))
             }
 

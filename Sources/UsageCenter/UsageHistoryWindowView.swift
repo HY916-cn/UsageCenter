@@ -127,7 +127,38 @@ struct UsageHistoryWindowView: View {
 
                 Spacer()
 
-                if activeProvider != .deepseek, snapshot.windows.count > 1 {
+                if activeProvider == .antigravity, snapshot.windows.count > 1 {
+                    let isThirdParty = !(activeWindow?.groupName?.lowercased().contains("gemini") ?? true)
+                    let currentKind: WindowKind = (activeWindow?.kind == .fiveHour) ? .fiveHour : .weekly
+
+                    HStack(spacing: 8) {
+                        capsulePair(
+                            items: [("Gemini", false), ("第三方", true)],
+                            selected: isThirdParty
+                        ) { pickThirdParty in
+                            if let target = snapshot.windows.first(where: {
+                                (!(($0.groupName ?? "").lowercased().contains("gemini")) == pickThirdParty) && $0.kind == currentKind
+                            }) ?? snapshot.windows.first(where: {
+                                !(($0.groupName ?? "").lowercased().contains("gemini")) == pickThirdParty
+                            }) {
+                                store.historyWindowID = target.id
+                                store.hoveredQuotaPointID = nil
+                            }
+                        }
+
+                        capsulePair(
+                            items: [("5h", WindowKind.fiveHour), ("7d", WindowKind.weekly)],
+                            selected: currentKind
+                        ) { pickKind in
+                            if let target = snapshot.windows.first(where: {
+                                (!(($0.groupName ?? "").lowercased().contains("gemini")) == isThirdParty) && $0.kind == pickKind
+                            }) ?? snapshot.windows.first(where: { $0.kind == pickKind }) {
+                                store.historyWindowID = target.id
+                                store.hoveredQuotaPointID = nil
+                            }
+                        }
+                    }
+                } else if activeProvider != .deepseek, snapshot.windows.count > 1 {
                     UniformDropdown(
                         selection: Binding(
                             get: { store.historyWindowID ?? store.defaultHistoryWindowID(for: activeProvider) ?? "" },
@@ -625,6 +656,38 @@ struct UsageHistoryWindowView: View {
     private func bucketMidpoint(for date: Date, unit: Calendar.Component) -> Date {
         guard let iv = Calendar.current.dateInterval(of: unit, for: date) else { return date }
         return iv.start.addingTimeInterval(iv.duration / 2)
+    }
+
+    private func capsulePair<Value: Equatable>(
+        items: [(String, Value)],
+        selected: Value,
+        onSelect: @escaping (Value) -> Void
+    ) -> some View {
+        HStack(spacing: 4) {
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                let isSel = (item.1 == selected)
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        onSelect(item.1)
+                    }
+                } label: {
+                    Text(item.0)
+                        .font(.caption.weight(isSel ? .semibold : .regular))
+                        .padding(.horizontal, 11)
+                        .frame(height: 26)
+                        .background {
+                            if isSel {
+                                Capsule().fill(CodexPalette.chartAccent.opacity(0.32))
+                            }
+                        }
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(isSel ? .white : .white.opacity(0.68))
+            }
+        }
+        .padding(3)
+        .background(Color.white.opacity(0.08), in: Capsule())
     }
 
     private var rangeSubtitle: String {
