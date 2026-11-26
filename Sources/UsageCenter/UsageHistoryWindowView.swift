@@ -110,6 +110,18 @@ struct UsageHistoryWindowView: View {
                 .padding(.bottom, 26)
             }
         }
+        .onScrollPhaseChange { _, phase in
+            let scrolling = phase.isScrolling
+            store.isHistoryScrolling = scrolling
+            if scrolling {
+                if store.hoveredQuotaPointID != nil {
+                    store.hoveredQuotaPointID = nil
+                }
+                if store.hoveredTokenDate != nil {
+                    store.hoveredTokenDate = nil
+                }
+            }
+        }
     }
 
     // MARK: - 1. Detailed Quota & Cycle History Card
@@ -308,12 +320,20 @@ struct UsageHistoryWindowView: View {
                     tint: .white
                 )
 
-                if store.historyMode == .currentCycle, let reset = activeWindow?.resetsAt {
-                    metricBlock(
-                        title: "距离重置",
-                        value: TimeFormatting.compactCountdown(until: reset, from: Date()),
-                        tint: .white
-                    )
+                if store.historyMode == .currentCycle {
+                    if let reset = activeWindow?.resetsAt {
+                        metricBlock(
+                            title: "距离重置",
+                            value: TimeFormatting.compactCountdown(until: reset, from: Date()),
+                            tint: .white
+                        )
+                    } else if activeWindow?.remainingPercent == 100 {
+                        metricBlock(
+                            title: "距离重置",
+                            value: "未开始",
+                            tint: .white.opacity(0.85)
+                        )
+                    }
                 }
             }
 
@@ -332,111 +352,66 @@ struct UsageHistoryWindowView: View {
     private func interactiveQuotaChart(series: QuotaChartSeries) -> some View {
         let hoveredPoint = series.points.first { $0.id == store.hoveredQuotaPointID }
 
-        return Chart {
-            ForEach(series.gaps) { gap in
-                RectangleMark(
-                    xStart: .value("缺口起点", gap.start),
-                    xEnd: .value("缺口终点", gap.end),
-                    yStart: .value("下界", 0),
-                    yEnd: .value("上界", series.isBalanceSeries ? (series.points.map(\.value).max() ?? 100) : 100)
-                )
-                .foregroundStyle(Color.white.opacity(0.07))
-            }
-
-            ForEach(series.idealSegments) { seg in
-                LineMark(
-                    x: .value("时间", seg.start),
-                    y: .value("理想线", seg.startValue),
-                    series: .value("理想", seg.id)
-                )
-                .foregroundStyle(Color.white.opacity(0.45))
-                .lineStyle(StrokeStyle(lineWidth: 1.2, dash: [5, 5]))
-
-                LineMark(
-                    x: .value("时间", seg.end),
-                    y: .value("理想线", seg.endValue),
-                    series: .value("理想", seg.id)
-                )
-                .foregroundStyle(Color.white.opacity(0.45))
-                .lineStyle(StrokeStyle(lineWidth: 1.2, dash: [5, 5]))
-            }
-
-            ForEach(series.points) { pt in
-                AreaMark(
-                    x: .value("时间", pt.date),
-                    y: .value("数值", pt.value),
-                    series: .value("周期面", pt.cycleID)
-                )
-                .interpolationMethod(.monotone)
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [CodexPalette.chartAccent.opacity(0.30), .clear],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-
-                LineMark(
-                    x: .value("时间", pt.date),
-                    y: .value("数值", pt.value),
-                    series: .value("周期线", pt.cycleID)
-                )
-                .interpolationMethod(.monotone)
-                .foregroundStyle(CodexPalette.chartAccentBright)
-                .lineStyle(StrokeStyle(lineWidth: 1.8, lineCap: .round))
-            }
-
-            if let hoveredPoint {
-                RuleMark(x: .value("悬停", hoveredPoint.date))
-                    .foregroundStyle(Color.white.opacity(0.55))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-
-                PointMark(
-                    x: .value("时间", hoveredPoint.date),
-                    y: .value("数值", hoveredPoint.value)
-                )
-                .foregroundStyle(.white)
-                .symbolSize(52)
-            } else if let latest = series.points.last {
-                PointMark(
-                    x: .value("时间", latest.date),
-                    y: .value("数值", latest.value)
-                )
-                .foregroundStyle(CodexPalette.chartAccentBright)
-                .symbolSize(40)
-            }
-        }
-        .chartXScale(domain: series.domain)
-        .chartYScale(domain: series.isBalanceSeries
-            ? 0...(max(10, (series.points.map(\.value).max() ?? 50) * 1.15))
-            : 0...100
-        )
-        .clipped()
-        .transaction { transaction in
-            transaction.animation = nil
-        }
-        .chartOverlay { proxy in
-            GeometryReader { geo in
-                Rectangle()
-                    .fill(.clear)
-                    .contentShape(Rectangle())
-                    .onContinuousHover { phase in
-                        switch phase {
-                        case .active(let location):
-                            let plotOrigin = geo[proxy.plotFrame!].origin
-                            let relX = location.x - plotOrigin.x
-                            if let hoveredDate: Date = proxy.value(atX: relX) {
-                                let nearest = series.points.min {
-                                    abs($0.date.timeIntervalSince(hoveredDate)) < abs($1.date.timeIntervalSince(hoveredDate))
+        return StaticQuotaPlotView(series: series)
+            .equatable()
+            .chartOverlay { proxy in
+                GeometryReader { geo in
+                    ZStack(alignment: .topLeading) {
+                        Rectangle()
+                            .fill(.clear)
+                            .contentShape(Rectangle())
+                            .onContinuousHover { phase in
+                                switch phase {
+                                case .active(let location):
+                                    guard !store.isHistoryScrolling,
+                                          let plotAnchor = proxy.plotFrame else { return }
+                                    let plotRect = geo[plotAnchor]
+                                    guard plotRect.contains(location) else {
+                                        if store.hoveredQuotaPointID != nil {
+                                            store.hoveredQuotaPointID = nil
+                                        }
+                                        return
+                                    }
+                                    let relX = location.x - plotRect.minX
+                                    if let hoveredDate: Date = proxy.value(atX: relX) {
+                                        let nearestID = series.points.min {
+                                            abs($0.date.timeIntervalSince(hoveredDate)) < abs($1.date.timeIntervalSince(hoveredDate))
+                                        }?.id
+                                        if store.hoveredQuotaPointID != nearestID {
+                                            store.hoveredQuotaPointID = nearestID
+                                        }
+                                    }
+                                case .ended:
+                                    if store.hoveredQuotaPointID != nil {
+                                        store.hoveredQuotaPointID = nil
+                                    }
                                 }
-                                store.hoveredQuotaPointID = nearest?.id
                             }
-                        case .ended:
-                            store.hoveredQuotaPointID = nil
+
+                        if let hoveredPoint,
+                           let plotAnchor = proxy.plotFrame,
+                           let px = proxy.position(forX: hoveredPoint.date),
+                           let py = proxy.position(forY: hoveredPoint.value) {
+                            let plotRect = geo[plotAnchor]
+                            let xPos = plotRect.minX + px
+                            let yPos = plotRect.minY + py
+
+                            Path { path in
+                                path.move(to: CGPoint(x: xPos, y: plotRect.minY))
+                                path.addLine(to: CGPoint(x: xPos, y: plotRect.maxY))
+                            }
+                            .stroke(Color.white.opacity(0.55), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                            .allowsHitTesting(false)
+
+                            Circle()
+                                .fill(Color.white)
+                                .frame(width: 8.5, height: 8.5)
+                                .position(x: xPos, y: yPos)
+                                .allowsHitTesting(false)
                         }
                     }
+                }
             }
-        }
     }
 
     // MARK: - 2. Detailed Token Activity Card (7d / 30d / 90d / 1y Weekly / All Monthly)
@@ -533,65 +508,61 @@ struct UsageHistoryWindowView: View {
                 case .all: 0.54
                 }
 
-                Chart(bars) { bar in
-                    let isHovered = (bar.bucketDate == store.hoveredTokenDate)
-                    let dimOthers = (store.hoveredTokenDate != nil && !isHovered)
-                    BarMark(
-                        x: .value("时间", bar.bucketDate, unit: calUnit),
-                        y: .value("Tokens", bar.tokens),
-                        width: .ratio(barRatio)
-                    )
-                    .foregroundStyle(
-                        isHovered
-                            ? LinearGradient(colors: [.white, CodexPalette.chartAccentBright], startPoint: .top, endPoint: .bottom)
-                            : LinearGradient(colors: [CodexPalette.chartAccentBright, CodexPalette.chartAccent.opacity(0.78)], startPoint: .top, endPoint: .bottom)
-                    )
-                    .opacity(dimOthers ? 0.42 : 1.0)
-                    .cornerRadius(4)
-
-                    if isHovered {
-                        RuleMark(x: .value("选中", bucketMidpoint(for: bar.bucketDate, unit: calUnit)))
-                            .foregroundStyle(Color.white.opacity(0.55))
-                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    }
-                }
-                .chartXScale(domain: domain)
-                .clipped()
-                .transaction { transaction in
-                    transaction.animation = nil
-                }
-                .chartYAxis {
-                    AxisMarks(position: .leading) { val in
-                        AxisGridLine().foregroundStyle(Color.white.opacity(0.12))
-                        AxisValueLabel {
-                            if let num = val.as(Int64.self) {
-                                Text(CompactTokenFormatter.format(num))
-                                    .foregroundStyle(.white.opacity(0.70))
-                            }
-                        }
-                    }
-                }
+                StaticTokenBarsPlotView(
+                    bars: bars,
+                    calUnit: calUnit,
+                    domain: domain,
+                    barRatio: barRatio
+                )
+                .equatable()
                 .chartOverlay { proxy in
                     GeometryReader { geo in
-                        Rectangle()
-                            .fill(.clear)
-                            .contentShape(Rectangle())
-                            .onContinuousHover { phase in
-                                switch phase {
-                                case .active(let loc):
-                                    let origin = geo[proxy.plotFrame!].origin
-                                    if let d: Date = proxy.value(atX: loc.x - origin.x) {
-                                        let nearest = bars.min {
-                                            let m1 = bucketMidpoint(for: $0.bucketDate, unit: calUnit)
-                                            let m2 = bucketMidpoint(for: $1.bucketDate, unit: calUnit)
-                                            return abs(m1.timeIntervalSince(d)) < abs(m2.timeIntervalSince(d))
+                        ZStack(alignment: .topLeading) {
+                            Rectangle()
+                                .fill(.clear)
+                                .contentShape(Rectangle())
+                                .onContinuousHover { phase in
+                                    switch phase {
+                                    case .active(let loc):
+                                        guard !store.isHistoryScrolling,
+                                              let plotAnchor = proxy.plotFrame else { return }
+                                        let plotRect = geo[plotAnchor]
+                                        guard plotRect.contains(loc) else {
+                                            if store.hoveredTokenDate != nil {
+                                                store.hoveredTokenDate = nil
+                                            }
+                                            return
                                         }
-                                        store.hoveredTokenDate = nearest?.bucketDate
+                                        if let d: Date = proxy.value(atX: loc.x - plotRect.minX) {
+                                            let nearestDate = bars.min {
+                                                let m1 = bucketMidpoint(for: $0.bucketDate, unit: calUnit)
+                                                let m2 = bucketMidpoint(for: $1.bucketDate, unit: calUnit)
+                                                return abs(m1.timeIntervalSince(d)) < abs(m2.timeIntervalSince(d))
+                                            }?.bucketDate
+                                            if store.hoveredTokenDate != nearestDate {
+                                                store.hoveredTokenDate = nearestDate
+                                            }
+                                        }
+                                    case .ended:
+                                        if store.hoveredTokenDate != nil {
+                                            store.hoveredTokenDate = nil
+                                        }
                                     }
-                                case .ended:
-                                    store.hoveredTokenDate = nil
                                 }
+
+                            if let hoveredBar,
+                               let plotAnchor = proxy.plotFrame,
+                               let px = proxy.position(forX: bucketMidpoint(for: hoveredBar.bucketDate, unit: calUnit)) {
+                                let plotRect = geo[plotAnchor]
+                                let xPos = plotRect.minX + px
+                                Path { path in
+                                    path.move(to: CGPoint(x: xPos, y: plotRect.minY))
+                                    path.addLine(to: CGPoint(x: xPos, y: plotRect.maxY))
+                                }
+                                .stroke(Color.white.opacity(0.65), style: StrokeStyle(lineWidth: 1.2, dash: [3, 3]))
+                                .allowsHitTesting(false)
                             }
+                        }
                     }
                 }
                 .frame(height: 224)
@@ -781,5 +752,127 @@ struct UsageHistoryWindowView: View {
                 .frame(maxWidth: 420)
         }
         .frame(maxWidth: .infinity, minHeight: 170)
+    }
+}
+
+// MARK: - Equatable Static Swift Charts Subviews (Zero Re-Tessellation During Hover & Scroll)
+
+private struct StaticQuotaPlotView: View, Equatable {
+    let series: QuotaChartSeries
+
+    var body: some View {
+        Chart {
+            ForEach(series.gaps) { gap in
+                RectangleMark(
+                    xStart: .value("缺口起点", gap.start),
+                    xEnd: .value("缺口终点", gap.end),
+                    yStart: .value("下界", 0),
+                    yEnd: .value("上界", series.isBalanceSeries ? (series.points.map(\.value).max() ?? 100) : 100)
+                )
+                .foregroundStyle(Color.white.opacity(0.07))
+            }
+
+            ForEach(series.idealSegments) { seg in
+                LineMark(
+                    x: .value("时间", seg.start),
+                    y: .value("理想线", seg.startValue),
+                    series: .value("理想", seg.id)
+                )
+                .foregroundStyle(Color.white.opacity(0.45))
+                .lineStyle(StrokeStyle(lineWidth: 1.2, dash: [5, 5]))
+
+                LineMark(
+                    x: .value("时间", seg.end),
+                    y: .value("理想线", seg.endValue),
+                    series: .value("理想", seg.id)
+                )
+                .foregroundStyle(Color.white.opacity(0.45))
+                .lineStyle(StrokeStyle(lineWidth: 1.2, dash: [5, 5]))
+            }
+
+            ForEach(series.points) { pt in
+                AreaMark(
+                    x: .value("时间", pt.date),
+                    y: .value("数值", pt.value),
+                    series: .value("周期面", pt.cycleID)
+                )
+                .interpolationMethod(.monotone)
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [CodexPalette.chartAccent.opacity(0.30), .clear],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+
+                LineMark(
+                    x: .value("时间", pt.date),
+                    y: .value("数值", pt.value),
+                    series: .value("周期线", pt.cycleID)
+                )
+                .interpolationMethod(.monotone)
+                .foregroundStyle(CodexPalette.chartAccentBright)
+                .lineStyle(StrokeStyle(lineWidth: 1.8, lineCap: .round))
+            }
+
+            if let latest = series.points.last {
+                PointMark(
+                    x: .value("时间", latest.date),
+                    y: .value("数值", latest.value)
+                )
+                .foregroundStyle(CodexPalette.chartAccentBright)
+                .symbolSize(40)
+            }
+        }
+        .chartXScale(domain: series.domain)
+        .chartYScale(domain: series.isBalanceSeries
+            ? 0...(max(10, (series.points.map(\.value).max() ?? 50) * 1.15))
+            : 0...100
+        )
+        .clipped()
+        .transaction { transaction in
+            transaction.animation = nil
+        }
+    }
+}
+
+private struct StaticTokenBarsPlotView: View, Equatable {
+    let bars: [AggregatedTokenBar]
+    let calUnit: Calendar.Component
+    let domain: ClosedRange<Date>
+    let barRatio: CGFloat
+
+    var body: some View {
+        Chart(bars) { bar in
+            BarMark(
+                x: .value("时间", bar.bucketDate, unit: calUnit),
+                y: .value("Tokens", bar.tokens),
+                width: .ratio(barRatio)
+            )
+            .foregroundStyle(
+                LinearGradient(
+                    colors: [CodexPalette.chartAccentBright, CodexPalette.chartAccent.opacity(0.78)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .cornerRadius(4)
+        }
+        .chartXScale(domain: domain)
+        .clipped()
+        .transaction { transaction in
+            transaction.animation = nil
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading) { val in
+                AxisGridLine().foregroundStyle(Color.white.opacity(0.12))
+                AxisValueLabel {
+                    if let num = val.as(Int64.self) {
+                        Text(CompactTokenFormatter.format(num))
+                            .foregroundStyle(.white.opacity(0.70))
+                    }
+                }
+            }
+        }
     }
 }

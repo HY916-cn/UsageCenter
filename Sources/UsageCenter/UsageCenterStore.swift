@@ -74,6 +74,7 @@ final class UsageCenterStore: ObservableObject {
     @Published var tokenRange: TokenHistoryRange = .days30
     @Published var hoveredQuotaPointID: String?
     @Published var hoveredTokenDate: Date?
+    var isHistoryScrolling: Bool = false
     @Published var showsClearHistoryAlert: Bool = false
 
     @Published private(set) var historySamples: [QuotaHistoryPoint] = []

@@ -91,6 +91,19 @@ public struct QuotaWindow: Identifiable, Codable, Equatable, Sendable {
         resetRawText: String? = nil,
         detailText: String? = nil
     ) {
+        let validReset: Date? = if let resetsAt, resetsAt.timeIntervalSince1970 > 946_684_800 {
+            resetsAt
+        } else {
+            nil
+        }
+        let cleanedRawText: String? = if validReset == nil,
+            let raw = resetRawText?.trimmingCharacters(in: .whitespacesAndNewlines),
+            (raw.hasPrefix("1970-") || raw.hasPrefix("0001-") || raw.isEmpty) {
+            nil
+        } else {
+            resetRawText
+        }
+
         self.id = id
         self.groupID = groupID
         self.groupName = groupName
@@ -98,8 +111,8 @@ public struct QuotaWindow: Identifiable, Codable, Equatable, Sendable {
         self.kind = kind
         self.usedPercent = min(100, max(0, usedPercent))
         self.durationMinutes = durationMinutes
-        self.resetsAt = resetsAt
-        self.resetRawText = resetRawText
+        self.resetsAt = validReset
+        self.resetRawText = cleanedRawText
         self.detailText = detailText
     }
 

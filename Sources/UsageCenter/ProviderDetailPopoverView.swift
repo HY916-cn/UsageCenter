@@ -726,8 +726,13 @@ private struct ConciseWindowRow: View {
     }
 
     private var timeValue: Double? {
-        guard let rem = window.remainingTimePercent(at: now) else { return nil }
-        return percentMode == .remaining ? rem : (100.0 - rem)
+        if let rem = window.remainingTimePercent(at: now) {
+            return percentMode == .remaining ? rem : (100.0 - rem)
+        }
+        if window.remainingPercent == 100 && window.resetsAt == nil {
+            return percentMode == .remaining ? 100.0 : 0.0
+        }
+        return nil
     }
 
     var body: some View {
@@ -765,6 +770,10 @@ private struct ConciseWindowRow: View {
                 } else if let raw = window.resetRawText {
                     Text(raw)
                     Spacer()
+                } else if window.remainingPercent == 100 {
+                    Label("未开始计时", systemImage: "hourglass")
+                    Spacer()
+                    Text("首次调用后起算")
                 }
             }
             .font(.caption2)

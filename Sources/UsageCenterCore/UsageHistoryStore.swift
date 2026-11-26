@@ -24,6 +24,11 @@ public struct QuotaHistoryPoint: Identifiable, Codable, Equatable, Sendable {
         balanceAmount: Double? = nil,
         currency: String? = nil
     ) {
+        let normalizedReset: Date? = if let resetsAt, resetsAt.timeIntervalSince1970 > 946_684_800 {
+            resetsAt
+        } else {
+            nil
+        }
         self.id = id
         self.provider = provider
         self.windowID = windowID
@@ -31,7 +36,7 @@ public struct QuotaHistoryPoint: Identifiable, Codable, Equatable, Sendable {
         self.durationMinutes = durationMinutes
         self.timestamp = timestamp
         self.remainingPercent = remainingPercent
-        self.resetsAt = resetsAt
+        self.resetsAt = normalizedReset
         self.balanceAmount = balanceAmount
         self.currency = currency
     }
@@ -156,9 +161,17 @@ public enum HistoryAnalytics {
         let interval: DateInterval
         let durationSecs = Double(activeWindow?.durationMinutes ?? 10_080) * 60.0
 
+        func validReset(_ d: Date?) -> Date? {
+            guard let d, d.timeIntervalSince1970 > 946_684_800 else { return nil }
+            return d
+        }
+
+        let activeValidReset = validReset(activeWindow?.resetsAt)
+        let hasActiveStartedCycle = (activeValidReset != nil && activeValidReset! > now)
+
         switch mode {
         case .currentCycle:
-            if !isBalance, let reset = activeWindow?.resetsAt, reset > now {
+            if !isBalance, let reset = activeValidReset, reset > now {
                 let start = reset.addingTimeInterval(-durationSecs)
                 interval = DateInterval(start: start, end: reset)
             } else if !isBalance {
@@ -255,7 +268,9 @@ public enum HistoryAnalytics {
             )
         }
 
-        // Split into distinct quota reset cycles when remaining% jumps up by >=5% or resetsAt shifts >10m
+        // Split into distinct quota reset cycles only when quota replenishes (>=3%)
+        // or when an ALREADY-CONSUMED (<100%) window's reset date advances (>30m).
+        // Never split while remainingPercent == 100 (provisional sliding reset clock).
         var cycleIndex = 0
         var plotted: [QuotaChartSeries.PlottedPoint] = []
         var ideals: [QuotaChartSeries.IdealSegment] = []
@@ -263,7 +278,7 @@ public enum HistoryAnalytics {
         var hasGap = false
         var gapDates: [Date] = []
 
-        // Every active quota cycle begins at 100% at cycleStart (resetsAt - duration)
+        // Active started quota cycle begins at 100% at cycleStart (resetsAt - duration)
         if mode == .currentCycle, let first = inRange.first {
             if first.timestamp > interval.start.addingTimeInterval(1) {
                 plotted.append(QuotaChartSeries.PlottedPoint(
@@ -278,13 +293,19 @@ public enum HistoryAnalytics {
                 }
             }
             observedDrop += max(0, 100 - first.remainingPercent)
-            ideals.append(QuotaChartSeries.IdealSegment(
-                id: "ideal-0",
-                start: interval.start,
-                end: interval.end,
-                startValue: 100,
-                endValue: 0
-            ))
+            if hasActiveStartedCycle || validReset(inRange.last?.resetsAt).map({ $0 > now }) == true,
+               inRange.contains(where: { $0.remainingPercent < 100 }) || hasActiveStartedCycle {
+                let endBound = activeValidReset ?? validReset(inRange.last?.resetsAt) ?? interval.end
+                if endBound > interval.start {
+                    ideals.append(QuotaChartSeries.IdealSegment(
+                        id: "ideal-0",
+                        start: interval.start,
+                        end: min(interval.end, endBound),
+                        startValue: 100,
+                        endValue: 0
+                    ))
+                }
+            }
         } else if plotted.isEmpty, inRange.count == 1, let only = inRange.first {
             let anchorDate = max(interval.start, only.timestamp.addingTimeInterval(-min(durationSecs, 6 * 3600)))
             if only.timestamp > anchorDate {
@@ -301,15 +322,16 @@ public enum HistoryAnalytics {
             if i > 0 {
                 let prev = inRange[i - 1]
                 let resetAdvanced: Bool = {
-                    guard let r1 = prev.resetsAt, let r2 = sample.resetsAt else { return false }
-                    return r2.timeIntervalSince(r1) > 600
+                    guard prev.remainingPercent < 100 else { return false }
+                    guard let r1 = validReset(prev.resetsAt), let r2 = validReset(sample.resetsAt) else { return false }
+                    return r2.timeIntervalSince(r1) > 1800
                 }()
-                let jumpedUp = sample.remainingPercent - prev.remainingPercent >= 5
+                let jumpedUp = sample.remainingPercent - prev.remainingPercent >= 3
 
                 if resetAdvanced || jumpedUp {
                     cycleIndex += 1
                     let cycID = "cycle-\(cycleIndex)"
-                    if let r2 = sample.resetsAt {
+                    if let r2 = validReset(sample.resetsAt) {
                         let cStart = max(interval.start, r2.addingTimeInterval(-durationSecs))
                         plotted.append(QuotaChartSeries.PlottedPoint(
                             id: "synthetic-\(cycleIndex)",
@@ -317,13 +339,15 @@ public enum HistoryAnalytics {
                             date: cStart,
                             value: 100
                         ))
-                        ideals.append(QuotaChartSeries.IdealSegment(
-                            id: "ideal-\(cycleIndex)",
-                            start: cStart,
-                            end: min(interval.end, r2),
-                            startValue: 100,
-                            endValue: 0
-                        ))
+                        if sample.remainingPercent < 100 {
+                            ideals.append(QuotaChartSeries.IdealSegment(
+                                id: "ideal-\(cycleIndex)",
+                                start: cStart,
+                                end: min(interval.end, r2),
+                                startValue: 100,
+                                endValue: 0
+                            ))
+                        }
                         observedDrop += max(0, 100 - sample.remainingPercent)
                     }
                 } else {
@@ -345,7 +369,10 @@ public enum HistoryAnalytics {
             ))
         }
 
-        if mode != .currentCycle, ideals.isEmpty, let first = inRange.first, let reset = first.resetsAt {
+        if mode != .currentCycle,
+           ideals.isEmpty,
+           let consumedSample = inRange.first(where: { $0.remainingPercent < 100 }),
+           let reset = validReset(consumedSample.resetsAt) {
             let cStart = max(interval.start, reset.addingTimeInterval(-durationSecs))
             ideals.append(QuotaChartSeries.IdealSegment(
                 id: "ideal-base",
@@ -361,7 +388,7 @@ public enum HistoryAnalytics {
         var projectedZero: Date?
         if mode == .currentCycle,
            let last = inRange.last,
-           let reset = activeWindow?.resetsAt ?? last.resetsAt,
+           let reset = activeValidReset ?? (last.remainingPercent < 100 ? validReset(last.resetsAt) : nil),
            reset > now {
             let cycleStart = reset.addingTimeInterval(-durationSecs)
             let elapsed = now.timeIntervalSince(cycleStart)

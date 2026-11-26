@@ -317,7 +317,42 @@ struct UsageCenterMain {
                 now: now
             )
             precondition(series != nil && series!.observedConsumedPercent >= 14)
-            print("[OK] Multi-cycle history analytics & burn-rate projection verified")
+
+            // Verify epoch-zero reset_time filtering & unused 100% sliding-window stability
+            let zeroResetWin = QuotaWindow(
+                id: "agy-3p-weekly",
+                title: "每周配额",
+                kind: .weekly,
+                usedPercent: 0,
+                durationMinutes: 10_080,
+                resetsAt: Date(timeIntervalSince1970: 0),
+                resetRawText: "1970-01-01T00:00:00Z"
+            )
+            precondition(zeroResetWin.resetsAt == nil && zeroResetWin.resetRawText == nil, "Epoch-zero reset must be normalized to nil")
+            let slidingUnusedSamples: [QuotaHistoryPoint] = (0..<40).map { idx in
+                let sampleTime = now.addingTimeInterval(Double(idx - 40) * 900)
+                let slidingReset = idx < 35 ? sampleTime.addingTimeInterval(7 * 86_400) : Date(timeIntervalSince1970: 0)
+                return QuotaHistoryPoint(
+                    provider: .antigravity,
+                    windowID: "agy-3p-weekly",
+                    windowTitle: "每周配额",
+                    durationMinutes: 10_080,
+                    timestamp: sampleTime,
+                    remainingPercent: 100,
+                    resetsAt: slidingReset
+                )
+            }
+            let unusedSeries = HistoryAnalytics.buildQuotaSeries(
+                samples: slidingUnusedSamples,
+                mode: .currentCycle,
+                calendarUnit: .week,
+                calendarOffset: 0,
+                activeWindow: zeroResetWin,
+                isBalance: false,
+                now: now
+            )
+            precondition(unusedSeries != nil && unusedSeries!.idealSegments.isEmpty && Set(unusedSeries!.points.map(\.cycleID)).count == 1, "Unused 100% sliding window must stay in a single cycle without fake ideal lines")
+            print("[OK] Multi-cycle history analytics, epoch-zero filtering, & burn-rate projection verified")
         }
 
         // 4. Live CLI + DSH Check

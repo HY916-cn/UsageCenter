@@ -620,11 +620,16 @@ public enum AntigravityCLIParser {
     public static func parseISO8601(_ value: String) -> Date? {
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = fractional.date(from: value) { return d }
+        if let d = fractional.date(from: value) {
+            return d.timeIntervalSince1970 > 946_684_800 ? d : nil
+        }
 
         let basic = ISO8601DateFormatter()
         basic.formatOptions = [.withInternetDateTime]
-        return basic.date(from: value)
+        if let d = basic.date(from: value) {
+            return d.timeIntervalSince1970 > 946_684_800 ? d : nil
+        }
+        return nil
     }
 
     private static func parseLocalTimestamp(_ value: String) -> Date? {
@@ -633,7 +638,10 @@ public enum AntigravityCLIParser {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone.current
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return formatter.date(from: cleaned)
+        if let d = formatter.date(from: cleaned) {
+            return d.timeIntervalSince1970 > 946_684_800 ? d : nil
+        }
+        return nil
     }
 }
 
