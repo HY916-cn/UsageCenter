@@ -794,7 +794,8 @@ private struct StaticQuotaPlotView: View, Equatable {
                 AreaMark(
                     x: .value("时间", pt.date),
                     y: .value("数值", pt.value),
-                    series: .value("周期面", pt.cycleID)
+                    series: .value("周期面", pt.cycleID),
+                    stacking: .unstacked
                 )
                 .interpolationMethod(.monotone)
                 .foregroundStyle(

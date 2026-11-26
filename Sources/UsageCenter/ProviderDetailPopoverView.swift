@@ -385,7 +385,8 @@ struct ProviderDetailPopoverView: View {
                                 AreaMark(
                                     x: .value("时间", pt.date),
                                     y: .value("配额", pt.value),
-                                    series: .value("周期面", pt.cycleID)
+                                    series: .value("周期面", pt.cycleID),
+                                    stacking: .unstacked
                                 )
                                 .interpolationMethod(.monotone)
                                 .foregroundStyle(

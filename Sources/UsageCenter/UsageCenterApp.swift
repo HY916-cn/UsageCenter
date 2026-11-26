@@ -352,7 +352,37 @@ struct UsageCenterMain {
                 now: now
             )
             precondition(unusedSeries != nil && unusedSeries!.idealSegments.isEmpty && Set(unusedSeries!.points.map(\.cycleID)).count == 1, "Unused 100% sliding window must stay in a single cycle without fake ideal lines")
-            print("[OK] Multi-cycle history analytics, epoch-zero filtering, & burn-rate projection verified")
+
+            // Verify quota reset + transient stale-replica flap filtering + non-overlapping cycles
+            let flapSamples: [QuotaHistoryPoint] = [
+                QuotaHistoryPoint(provider: .antigravity, windowID: "agy-gemini-weekly", windowTitle: "周", durationMinutes: 10_080, timestamp: now.addingTimeInterval(-7200), remainingPercent: 53, resetsAt: now.addingTimeInterval(5 * 86_400)),
+                QuotaHistoryPoint(provider: .antigravity, windowID: "agy-gemini-weekly", windowTitle: "周", durationMinutes: 10_080, timestamp: now.addingTimeInterval(-3600), remainingPercent: 100, resetsAt: now.addingTimeInterval(7 * 86_400 - 3600)),
+                QuotaHistoryPoint(provider: .antigravity, windowID: "agy-gemini-weekly", windowTitle: "周", durationMinutes: 10_080, timestamp: now.addingTimeInterval(-3500), remainingPercent: 53, resetsAt: now.addingTimeInterval(5 * 86_400)),
+                QuotaHistoryPoint(provider: .antigravity, windowID: "agy-gemini-weekly", windowTitle: "周", durationMinutes: 10_080, timestamp: now.addingTimeInterval(-3400), remainingPercent: 100, resetsAt: now.addingTimeInterval(7 * 86_400 - 3400)),
+                QuotaHistoryPoint(provider: .antigravity, windowID: "agy-gemini-weekly", windowTitle: "周", durationMinutes: 10_080, timestamp: now.addingTimeInterval(-600), remainingPercent: 95, resetsAt: now.addingTimeInterval(7 * 86_400 - 600))
+            ]
+            let curResetSeries = HistoryAnalytics.buildQuotaSeries(
+                samples: flapSamples,
+                mode: .currentCycle,
+                calendarUnit: .week,
+                calendarOffset: 0,
+                activeWindow: QuotaWindow(id: "agy-gemini-weekly", title: "周", kind: .weekly, usedPercent: 5, durationMinutes: 10_080, resetsAt: now.addingTimeInterval(7 * 86_400 - 600)),
+                isBalance: false,
+                now: now
+            )
+            precondition(curResetSeries != nil && curResetSeries!.observedConsumedPercent == 5 && !curResetSeries!.points.contains(where: { $0.value == 53 }), "Current cycle after reset must exclude pre-reset and stale-flap 53% points")
+
+            let histResetSeries = HistoryAnalytics.buildQuotaSeries(
+                samples: flapSamples,
+                mode: .days7,
+                calendarUnit: .week,
+                calendarOffset: 0,
+                activeWindow: QuotaWindow(id: "agy-gemini-weekly", title: "周", kind: .weekly, usedPercent: 5, durationMinutes: 10_080, resetsAt: now.addingTimeInterval(7 * 86_400 - 600)),
+                isBalance: false,
+                now: now
+            )
+            precondition(histResetSeries != nil && Set(histResetSeries!.points.map(\.cycleID)).count == 2, "7-day view across one real reset with flaps must produce exactly 2 clean cycles")
+            print("[OK] Multi-cycle history analytics, reset flap filtering, epoch-zero filtering, & burn-rate projection verified")
         }
 
         // 4. Live CLI + DSH Check
