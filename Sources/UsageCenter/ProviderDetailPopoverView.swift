@@ -459,6 +459,7 @@ struct ProviderDetailPopoverView: View {
                             }
                         }
                         .frame(height: 118)
+                        .padding(.top, 5)
                         .clipped()
                         .transaction { transaction in
                             transaction.animation = nil
@@ -727,13 +728,8 @@ private struct ConciseWindowRow: View {
     }
 
     private var timeValue: Double? {
-        if let rem = window.remainingTimePercent(at: now) {
-            return percentMode == .remaining ? rem : (100.0 - rem)
-        }
-        if window.remainingPercent == 100 && window.resetsAt == nil {
-            return percentMode == .remaining ? 100.0 : 0.0
-        }
-        return nil
+        guard let rem = window.remainingTimePercent(at: now) else { return nil }
+        return percentMode == .remaining ? rem : (100.0 - rem)
     }
 
     var body: some View {
@@ -771,7 +767,7 @@ private struct ConciseWindowRow: View {
                 } else if let raw = window.resetRawText {
                     Text(raw)
                     Spacer()
-                } else if window.remainingPercent == 100 {
+                } else if window.isUnstarted {
                     Label("未开始计时", systemImage: "hourglass")
                     Spacer()
                     Text("首次调用后起算")

@@ -533,7 +533,7 @@ struct SettingsWindowView: View {
                 UsageCenterAppIconView(size: 56)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("UsageCenter 1.4.3")
+                    Text("UsageCenter 1.4.4")
                         .font(.title3.weight(.bold))
                     Text("Claude · ChatGPT · Antigravity · DeepSeek (DSH)")
                         .font(.caption)

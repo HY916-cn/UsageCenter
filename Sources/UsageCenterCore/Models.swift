@@ -127,12 +127,21 @@ public struct QuotaWindow: Identifiable, Codable, Equatable, Sendable {
         }
     }
 
+    public var isUnstarted: Bool {
+        resetsAt == nil && resetRawText == nil
+    }
+
     public func remainingTimePercent(at now: Date) -> Double? {
+        if isUnstarted {
+            return 100.0
+        }
         guard let durationMinutes, durationMinutes > 0, let resetsAt else {
             return nil
         }
         let remainingSeconds = resetsAt.timeIntervalSince(now)
-        guard remainingSeconds >= 0 else { return nil }
+        if remainingSeconds < 0 {
+            return remainingPercent == 100 ? 100.0 : 0.0
+        }
         let totalSeconds = Double(durationMinutes) * 60.0
         return min(100, max(0, remainingSeconds / totalSeconds * 100.0))
     }

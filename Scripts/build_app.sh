@@ -52,9 +52,9 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.4.3</string>
+    <string>1.4.4</string>
     <key>CFBundleVersion</key>
-    <string>11</string>
+    <string>12</string>
     <key>LSMinimumSystemVersion</key>
     <string>26.0</string>
     <key>UIDesignRequiresCompatibility</key>

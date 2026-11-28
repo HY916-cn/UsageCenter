@@ -329,6 +329,16 @@ struct UsageCenterMain {
                 resetRawText: "1970-01-01T00:00:00Z"
             )
             precondition(zeroResetWin.resetsAt == nil && zeroResetWin.resetRawText == nil, "Epoch-zero reset must be normalized to nil")
+            precondition(zeroResetWin.remainingTimePercent(at: now) == 100.0, "Unstarted window must report 100% remaining time")
+            var dualPrefs = UsageCenterPreferences()
+            dualPrefs.globalStyle = .dualBars
+            let unstartedLayout = StatusSegmentRenderer.buildLayout(
+                config: ProviderSectionConfig(provider: .claude, windowVisibility: .weeklyOnly),
+                snapshot: ProviderSnapshot(provider: .claude, windows: [zeroResetWin], isLoading: false),
+                preferences: dualPrefs,
+                now: now
+            )
+            precondition(unstartedLayout.units.first?.quotaPercent == 100.0 && unstartedLayout.units.first?.timePercent == 100.0, "Unstarted window must fill both quota and time bars to 100%")
             let slidingUnusedSamples: [QuotaHistoryPoint] = (0..<40).map { idx in
                 let sampleTime = now.addingTimeInterval(Double(idx - 40) * 900)
                 let slidingReset = idx < 35 ? sampleTime.addingTimeInterval(7 * 86_400) : Date(timeIntervalSince1970: 0)

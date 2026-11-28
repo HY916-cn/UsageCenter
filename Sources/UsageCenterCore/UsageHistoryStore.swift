@@ -319,10 +319,11 @@ public enum HistoryAnalytics {
             } else {
                 // Freshly reset 100% cycle whose countdown has not started yet (e.g. r == nil or unused 100%)
                 if let prevEnd = prevCycleEndTimestamp {
-                    cycleStart = max(firstSample.timestamp, prevEnd.addingTimeInterval(1))
-                    cycleEnd = max(now.addingTimeInterval(min(durationSecs * 0.15, 1800)), cycleStart.addingTimeInterval(durationSecs))
+                    let candidateStart = max(firstSample.timestamp, prevEnd.addingTimeInterval(1))
+                    cycleStart = min(candidateStart, now.addingTimeInterval(-60))
+                    cycleEnd = now
                 } else {
-                    cycleStart = min(firstSample.timestamp, now.addingTimeInterval(-durationSecs))
+                    cycleStart = min(firstSample.timestamp, now.addingTimeInterval(-3600))
                     cycleEnd = now
                 }
             }
